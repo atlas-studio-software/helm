@@ -191,13 +191,17 @@ function renderBlur(img, monW, monH, dpr, blurPx, sat = 100) {
 // hidden (home.css), so neither the blur nor a backdrop-filter is ever animated. The copy only exists on Home and
 // for the fade back out (homeFx 'from'); the same URL means the same decoded image. Lined up, the copy's picture is
 // a monitor-sized child (.bg-clear-img) under the same transform, so the fade still animates only .bg-clear.
+// Sharp glass (look-sync CONTRACT "2026-11-11", lane look-helm): on the desktop window (b.sharp) the picture is
+// painted sharp and unsaturated on every screen, so there is no Home copy and no Home scrim: one layer, one wash.
+// The Home copy and the light saturate below are the phone's (and ?mock=1's) path only.
 export function Background() {
   const b = background.value;
   const url = b.url !== undefined ? b.url : bgUrl(b.file);
   const fx = homeFx.value;
-  const clear = !!url && (view.value === 'home' || fx != null);
-  const blurPx = Math.max(0, +b.blur || 0);
-  const sat = resolvedTheme.value === 'light' ? 150 : 100;   // light ground: blur + saturate(150%) (shell.css does the same for the CSS layer)
+  const sharp = !!b.sharp;
+  const clear = !!url && !sharp && (view.value === 'home' || fx != null);
+  const blurPx = sharp ? 0 : Math.max(0, +b.blur || 0);
+  const sat = !sharp && resolvedTheme.value === 'light' ? 150 : 100;   // light ground on the phone: blur + saturate(150%) (shell.css does the same for the CSS layer)
   const want = !!(url && b.lineUp && !isPhone.value && typeof window !== 'undefined' && typeof window.helmNative?.onPlacement === 'function');
   const shown = lnShown.value;
   const lined = want && !!shown;
@@ -207,7 +211,7 @@ export function Background() {
   useLayoutEffect(() => { topRowUpdate('render'); });   // every render, same task as the commit: Mantle's top bar
   const pos = lined ? { width: `${shown.monW}px`, height: `${shown.monH}px`, transform: `translate3d(${LN.tx}px, ${LN.ty}px, 0)` } : null;
   const img = url && { backgroundImage: `url("${url}")` };
-  return html`<div class="bg" aria-hidden="true" ref=${refBg} data-lined=${lined ? '1' : '0'}
+  return html`<div class="bg" aria-hidden="true" ref=${refBg} data-lined=${lined ? '1' : '0'} data-sharp=${sharp ? '1' : '0'}
       data-tx=${String(lined ? LN.tx : 0)} data-ty=${String(lined ? LN.ty : 0)} data-blurs=${String(LN.blurs)}>
     ${url && (lined
       ? html`<div key="lined" class="bg-photo bg-lined" ref=${refPhoto} style=${pos}></div>`

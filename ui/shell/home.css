@@ -32,9 +32,11 @@ html[data-theme="light"] {
    holds the photo under the same translate3d as the blurred layer (shell.css .bg-lined) */
 .bg-clear-img { background-size: cover; background-position: center; }
 @keyframes home-bg-settle { from { scale: 1.015; } }
-/* the blurred layer is fully covered on Home: stop drawing it (and its full-screen blur) once the fade is done */
-.app.on-home .bg-photo { visibility: hidden; transition: visibility 0s linear 320ms; }
-/* a soft scrim under the tab bar so tabs, search and the update chip read over bright photos */
+/* the blurred layer is fully covered on Home: stop drawing it (and its full-screen blur) once the fade is done.
+   Phone only: the desktop window paints one sharp layer and no copy (data-sharp; chrome.js Background) */
+.app.on-home .bg:not([data-sharp="1"]) .bg-photo { visibility: hidden; transition: visibility 0s linear 320ms; }
+/* a soft scrim under the tab bar so tabs, search and the update chip read over bright photos. It lived on the copy,
+   so the desktop window (sharp, no copy) has none: the shared wash (Dim, raised by Mantle's top band) does the job */
 .app.desktop .bg-clear::after {
   content: ""; position: absolute; left: 0; right: 0; top: 0; height: 96px;
   background: linear-gradient(rgb(var(--home-scrim) / 0.5), rgb(var(--home-scrim) / 0));

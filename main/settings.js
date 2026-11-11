@@ -225,6 +225,7 @@ function createSettings(opts) {
       const v = isObj(g[t]) ? g[t] : {};
       const out = {};
       for (const k of Object.keys(LS.RANGES)) out[k] = inRange(v[k], k) ? v[k] : seed[t][k];
+      if (typeof v.dimAuto === 'boolean') out.dimAuto = v.dimAuto;   // CONTRACT 2026-11-11: absent = automatic
       return out;
     };
     s.glass = { dark: theme('dark'), light: theme('light'), render: ['picture', 'seeThrough'].includes(g.render) ? g.render : seed.render };
@@ -277,6 +278,7 @@ function createSettings(opts) {
         if (p.glass[t] === undefined) continue;
         if (!isObj(p.glass[t])) throw badParams(`glass.${t} must be an object`);
         for (const [k, v] of Object.entries(p.glass[t])) {
+          if (k === 'dimAuto') { if (typeof v !== 'boolean') throw badParams(`glass.${t}.dimAuto must be true or false`); continue; }
           if (!LS.RANGES[k]) throw badParams(`unknown glass.${t} key ${k}`);
           if (!inRange(v, k)) throw badParams(`glass.${t}.${k} must be ${LS.RANGES[k][0]}..${LS.RANGES[k][1]}`);
         }
@@ -350,7 +352,7 @@ function createSettings(opts) {
     if (legacyBlur || legacyDim) {
       const g = { ...(glass || s.glass).dark };
       if (legacyBlur) g.blurPx = clampRange(Math.round(p.background.blur), 'blurPx');
-      if (legacyDim) g.dim = clampRange(p.background.dim, 'dim');
+      if (legacyDim) { g.dim = clampRange(p.background.dim, 'dim'); g.dimAuto = false; }   // a Dim change = the user took it over
       glass = mergeGlass(glass || s.glass, { dark: g });
     }
     delete p.glass;
@@ -381,7 +383,16 @@ function createSettings(opts) {
     const patch = {};
     if (changes.theme !== undefined && ENUMS.theme.includes(changes.theme)) patch.theme = changes.theme;
     if (changes.accent && (changes.accent.hue === null || Number.isInteger(changes.accent.hue))) patch.accentHue = changes.accent.hue;
-    if (isObj(changes.glass)) patch.glass = { dark: changes.glass.dark, light: changes.glass.light, render: changes.glass.render };
+    // a shared theme entry is the whole value: absent dimAuto means automatic, so it is written out (a merge would
+    // otherwise keep a local false); keys Helm does not know are left out (set() would refuse them)
+    const theme = (v) => {
+      if (!isObj(v)) return v;
+      const o = {};
+      for (const k of Object.keys(LS.RANGES)) if (v[k] !== undefined) o[k] = v[k];
+      o.dimAuto = v.dimAuto !== false;
+      return o;
+    };
+    if (isObj(changes.glass)) patch.glass = { dark: theme(changes.glass.dark), light: theme(changes.glass.light), render: changes.glass.render };
     if (!Object.keys(patch).length) return get();
     return set(patch, { fromSync: true });
   }

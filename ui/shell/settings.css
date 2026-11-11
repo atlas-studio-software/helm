@@ -330,3 +330,8 @@ button.cc-item:active { background: var(--surface-1); }
   .acct-code-row .input { flex: none; }
 }
 /* ---- end lane account ---- */
+
+/* Dim + Auto (look-sync CONTRACT "2026-11-11"): the slider takes the tint over (Manual); Auto hands it back */
+.dim-ctl { display: flex; align-items: center; gap: 8px; width: min(380px, 100%); }
+.dim-ctl .range { flex: 1; min-width: 0; }
+.dim-auto[aria-pressed="true"] { color: var(--text); background: var(--accent-soft); border-color: var(--accent-line); }

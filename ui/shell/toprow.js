@@ -131,6 +131,8 @@ function compute() {
   const lined = s && s.lined;   // { canvas, monW, monH, key, url, blurPx } on screen, or null (CSS cover + filter)
   const d = b.desktop || null, sync = look.peek()?.sync || null;
   const sharedBlur = sync && sync.enabled && sync.state === 'ok' ? settings.peek()?.glass?.[theme]?.blurPx : null;   // the glass of the theme showing (light look un-held)
+  // sharp glass (2026-11-11): Helm paints the still at blur 0, so 'wash' (Mantle draws the still itself at the shared
+  // blur) is only exact while the shared blurPx is 0 too; otherwise the real row is sent ('cols')
   st.washOk = !!(lined && b.mode === 'desktop' && d && d.source === 'mantle' && lined.url === b.url
     && sharedBlur != null && Math.abs(lined.blurPx - sharedBlur) < 0.01);
   let why = null;
@@ -150,7 +152,7 @@ function compute() {
     } else why = 'the picture is still decoding';
   }
   const top = topFor(st);
-  if (top.kind === 'wash') why = 'the shared desktop still, lined up and blurred like the shared glass';
+  if (top.kind === 'wash') why = 'the shared desktop still, lined up, at the shared glass blur (sharp: 0)';
   else if (top.kind === 'cols') why = st.home > 0 ? (st.home < 1 ? 'Home fading' : 'Home: the unblurred picture') : !lined ? 'own picture / not lined up yet' : 'lined up, but not the shared glass (sync off, a preview, or a different still)';
   return { top, why: why || 'unknown' };
 }

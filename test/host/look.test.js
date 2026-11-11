@@ -82,15 +82,16 @@ test('migration clamps old values into the shared ranges', () => {
 test('a fresh install starts on the shared seed', () => {
   const { settings } = makeSettings(null);
   const s = settings.get();
-  assert.deepEqual(s.glass, { dark: { blurPx: 5, dim: 0.5, panel: 0 }, light: { blurPx: 12, dim: 0.45, panel: 0 }, render: 'picture' });
+  // look-sync 98bf878 (CONTRACT "2026-11-11: sharp painted glass + tint override"): blur 0, dim .30, both themes
+  assert.deepEqual(s.glass, { dark: { blurPx: 0, dim: 0.3, panel: 0 }, light: { blurPx: 0, dim: 0.3, panel: 0 }, render: 'picture' });
   assert.equal(s.background.mode, 'desktop');
 });
 
 test('a hand-damaged glass falls back per value', () => {
   const { settings } = makeSettings({ glass: { dark: { blurPx: 999, dim: 0.6, panel: 'x' }, render: 'laser' }, accentHue: 7.5, lookSync: 'yes', background: { mode: 'sideways' } });
   const s = settings.get();
-  assert.deepEqual(s.glass.dark, { blurPx: 5, dim: 0.6, panel: 0 });
-  assert.deepEqual(s.glass.light, { blurPx: 12, dim: 0.45, panel: 0 });
+  assert.deepEqual(s.glass.dark, { blurPx: 0, dim: 0.6, panel: 0 });
+  assert.deepEqual(s.glass.light, { blurPx: 0, dim: 0.3, panel: 0 });
   assert.equal(s.glass.render, 'picture');
   assert.equal(s.accentHue, null);
   assert.deepEqual(s.lookSync, { enabled: true });
@@ -131,7 +132,7 @@ test('legacy background.blur/dim from an older client lands in glass.dark (the l
 });
 
 // ---------------------------------------------------------------- the adapter (real folder)
-test('first start with no shared file seeds it (Match Windows); Helm keeps its glass', { skip: !HAS_WRITER && 'no ~/look-sync' }, async () => {
+test('first start with no shared file seeds it (Match Windows); Helm adopts the seed', { skip: !HAS_WRITER && 'no ~/look-sync' }, async () => {
   const dir = tmp('seed');
   const ctx = makeSettings({ background: { file: 'snow-peak.jpg', blur: 5, dim: 0.5 }, theme: 'dark' });
   const { look } = makeLook(ctx, dir);
@@ -139,10 +140,12 @@ test('first start with no shared file seeds it (Match Windows); Helm keeps its g
   await until(() => look.state().sync.state === 'ok');
   const doc = readLook(dir);
   assert.equal(doc.writer.app, 'helm');
-  assert.deepEqual(doc.look.glass.v.dark, { blurPx: 5, dim: 0.5, panel: 0 });
+  assert.deepEqual(doc.look.glass.v.dark, { blurPx: 0, dim: 0.3, panel: 0 }, 'the seed (look-sync 98bf878)');
   assert.equal(doc.look.theme.v, 'system', 'the first seed is Match Windows (look-sync 0b55b9c)');
   assert.equal(ctx.settings.get().theme, 'system', 'Helm adopts the seed so all three start on the same look');
-  assert.deepEqual(ctx.settings.get().glass.dark, { blurPx: 5, dim: 0.5, panel: 0 }, 'dark look unchanged by the seed');
+  // look-sync 98bf878: the seed glass (blur 0 / dim .30) is adopted like the theme; a shared entry is the whole value,
+  // so its absent dimAuto lands as true (automatic). Before, Helm's 5 / .50 happened to equal the old seed.
+  assert.deepEqual(ctx.settings.get().glass.dark, { blurPx: 0, dim: 0.3, panel: 0, dimAuto: true }, 'dark glass = the seed');
   assert.match(look.state().sync.reason || '', /started/i);
   look.close();
 });
@@ -363,18 +366,26 @@ test('checkGuard: a valid, fresh guard is used; everything else falls back with 
   assert.match(why(rec(GUARD), GLASS, { syncOn: true, source: 'windows' }), /not sharing the desktop picture/);
 });
 
-test('washFor: dark + desktop paints the guard; own ignores it; light never takes the dark guard; a stale preview falls back with a reason', () => {
-  const dark = { theme: 'dark', dim: 0.5, blurPx: 5 }, light = { theme: 'light', dim: 0.5, blurPx: 5 };
-  const desk = { source: 'mantle', guard: { alpha: 0.6, dim: 0.5, blurPx: 5 }, guardReason: null };
-  assert.deepEqual(washFor(dark, 'desktop', desk), { dim: 0.6, used: true, reason: null }, 'guard used');
-  assert.deepEqual(washFor(dark, 'own', desk), { dim: 0.5, used: false, reason: null }, 'own picture keeps the fixed dim');
-  assert.deepEqual(washFor(light, 'desktop', desk), { dim: 0.5, used: false, reason: 'light top band not published by Mantle yet' },
-    'light ignores the dark guard; an older host with no light fields says why');
-  const stale = washFor({ ...dark, dim: 0.62 }, 'desktop', desk);   // dragging the dim slider
-  assert.equal(stale.dim, 0.62); assert.equal(stale.used, false); assert.match(stale.reason, /waiting for it to catch up with dim 0\.62/);
-  const none = washFor(dark, 'desktop', { source: 'windows', guard: null, guardReason: 'Mantle is not sharing the desktop picture' });
-  assert.deepEqual(none, { dim: 0.5, used: false, reason: 'Mantle is not sharing the desktop picture' });
-  assert.equal(washFor(dark, 'desktop', null).dim, 0.5, 'no look state yet: the dim');
+test('washFor (look-sync washAlpha): Automatic raises to a valid guard; own / unusable / stale stay at Dim with the reason; Manual is exactly Dim', () => {
+  const dark = { theme: 'dark', dim: 0.5, blurPx: 5, dimAuto: true }, light = { theme: 'light', dim: 0.5, blurPx: 5, dimAuto: true };
+  const record = { ok: true, still: 'x.png', reason: null, guard: { dark: { alpha: 0.6, dim: 0.5, blurPx: 5 } }, guardReason: null };
+  const desk = { source: 'mantle', record, unusable: null };
+  const up = washFor(dark, 'desktop', desk);
+  assert.equal(up.alpha, 0.6); assert.equal(up.mode, 'auto'); assert.equal(up.raised, true);
+  assert.match(up.text, /^Automatic: 0\.50, raised to 0\.60/);
+  const own = washFor(dark, 'own', desk);
+  assert.equal(own.alpha, 0.5); assert.equal(own.raised, false); assert.match(own.reason, /your own picture shows/);
+  const lt = washFor(light, 'desktop', desk);
+  assert.equal(lt.alpha, 0.5, 'light never takes the dark guard'); assert.match(lt.reason, /light top band/);
+  const stale = washFor({ ...dark, dim: 0.62 }, 'desktop', desk);   // another app moved the dim; Mantle not caught up
+  assert.equal(stale.alpha, 0.62); assert.equal(stale.raised, false); assert.match(stale.reason, /Dim 0\.50 and blur 5/);
+  const manual = washFor({ ...dark, dim: 0.3, dimAuto: false }, 'desktop', desk);
+  assert.equal(manual.alpha, 0.3); assert.equal(manual.mode, 'manual'); assert.equal(manual.text, 'Manual: 0.30');
+  const off = washFor(dark, 'desktop', { ...desk, unusable: "Look Sync is off, so Mantle's top band is not used" });
+  assert.equal(off.alpha, 0.5); assert.match(off.reason, /Look Sync is off/);
+  assert.match(washFor(dark, 'desktop', { source: 'mantle' }).reason, /older host/, 'a host without the record says so');
+  assert.equal(washFor(dark, 'desktop', null).alpha, 0.5, 'no look state yet: the dim');
+  assert.match(washFor(dark, 'desktop', null).reason, /hasn't heard/);
 });
 
 // ---------------------------------------------------------------- the light look (CONTRACT "Light look", 2026-10-14)
@@ -404,33 +415,37 @@ test('checkGuardLight: a valid, fresh guard.light is used; missing / invalid / s
   assert.equal(checkGuard(recL(undefined), GLASS, ON).guard.alpha, 0.52);
 });
 
-test('washFor light: following the desktop paints guard.light (white); own uses the light dim; stale / missing say why', () => {
-  const light = { theme: 'light', dim: 0.45, blurPx: 12 };
-  const desk = { source: 'mantle', guard: { alpha: 0.6, dim: 0.5, blurPx: 5 }, guardReason: null,
-    guardLight: { alpha: 0.55, dim: 0.45, blurPx: 12 }, guardLightReason: null };
-  assert.deepEqual(washFor(light, 'desktop', desk), { dim: 0.55, used: true, reason: null }, 'guard.light used');
-  assert.deepEqual(washFor({ theme: 'dark', dim: 0.5, blurPx: 5 }, 'desktop', desk), { dim: 0.6, used: true, reason: null }, 'dark still takes guard.dark');
-  assert.deepEqual(washFor(light, 'own', desk), { dim: 0.45, used: false, reason: null }, 'own picture: glass.light.dim');
-  const stale = washFor({ ...light, dim: 0.5 }, 'desktop', desk);   // dragging the light dim slider
-  assert.equal(stale.dim, 0.5); assert.equal(stale.used, false);
-  assert.match(stale.reason, /light top band is stale: it was worked out for dim 0\.45 \/ blur 12px; waiting for it to catch up with dim 0\.50/);
-  const none = washFor(light, 'desktop', { ...desk, guardLight: null, guardLightReason: 'light top band not published by Mantle yet' });
-  assert.deepEqual(none, { dim: 0.45, used: false, reason: 'light top band not published by Mantle yet' });
+test('washFor light: Automatic raises to a valid guard.light; own and stale keep the light Dim and say why', () => {
+  const light = { theme: 'light', dim: 0.45, blurPx: 12, dimAuto: true };
+  const record = { ok: true, still: 'x.png', guard: { dark: { alpha: 0.6, dim: 0.5, blurPx: 5 }, light: { alpha: 0.55, dim: 0.45, blurPx: 12 } } };
+  const desk = { source: 'mantle', record, unusable: null };
+  const up = washFor(light, 'desktop', desk);
+  assert.equal(up.alpha, 0.55); assert.equal(up.raised, true);
+  assert.equal(washFor({ theme: 'dark', dim: 0.5, blurPx: 5 }, 'desktop', desk).alpha, 0.6, 'dark still takes guard.dark');
+  assert.equal(washFor(light, 'own', desk).alpha, 0.45, 'own picture: glass.light.dim');
+  const stale = washFor({ ...light, dim: 0.5 }, 'desktop', desk);
+  assert.equal(stale.alpha, 0.5); assert.match(stale.text, /^Automatic: 0\.50, not raised: .*waiting for Mantle/);
+  const none = washFor(light, 'desktop', { ...desk, record: { ...record, guard: { dark: record.guard.dark } } });
+  assert.equal(none.alpha, 0.45); assert.match(none.reason, /has not published the light top band/);
 });
 
 test('glass per theme: light paints glass.light (blur, dim, panel); sliders made in light save to glass.light only', async () => {
   const G = await import('../../ui/lib/glass.js');
   const st = { glass: { dark: { blurPx: 5, dim: 0.5, panel: 0 }, light: { blurPx: 12, dim: 0.45, panel: 0.05 } }, background: { blur: 5, dim: 0.5 } };
-  assert.deepEqual(G.paintedGlass(st, 'light', null), { theme: 'light', blurPx: 12, dim: 0.45, panel: 0.05 }, 'the light glass, panel shift included');
-  assert.deepEqual(G.paintedGlass(st, 'dark', null), { theme: 'dark', blurPx: 5, dim: 0.5, panel: 0 }, 'dark exactly as before');
-  assert.deepEqual(G.paintedGlass({ background: { blur: 9, dim: 0.6 } }, 'light', null), { theme: 'light', blurPx: 9, dim: 0.6, panel: 0 }, 'older host: its one blur/dim');
+  assert.deepEqual(G.paintedGlass(st, 'light', null), { theme: 'light', blurPx: 12, dim: 0.45, panel: 0.05, dimAuto: true }, 'the light glass, panel shift included');
+  assert.deepEqual(G.paintedGlass(st, 'dark', null), { theme: 'dark', blurPx: 5, dim: 0.5, panel: 0, dimAuto: true }, 'dark exactly as before (dimAuto absent = automatic)');
+  assert.deepEqual(G.paintedGlass({ background: { blur: 9, dim: 0.6 } }, 'light', null), { theme: 'light', blurPx: 9, dim: 0.6, panel: 0, dimAuto: true }, 'older host: its one blur/dim');
   // a slider dragged in light: previews light, saves glass.light, never glass.dark
   let pv = G.withPreview(null, { dim: 0.6 }, 'light');
   pv = G.withPreview(pv, { panel: -0.1 }, 'light');
-  assert.deepEqual(pv, { dim: 0.6, panel: -0.1, theme: 'light' });
+  assert.deepEqual(pv, { dim: 0.6, dimAuto: false, panel: -0.1, theme: 'light' }, 'moving Dim takes the tint over (Manual)');
   assert.equal(G.paintedGlass(st, 'light', pv).dim, 0.6);
   assert.equal(G.paintedGlass(st, 'dark', pv).dim, 0.5, 'a light preview never shows in dark');
-  assert.deepEqual(G.savePartial(pv), { glass: { light: { dim: 0.6, panel: -0.1 } } });
+  assert.deepEqual(G.savePartial(pv), { glass: { light: { dim: 0.6, dimAuto: false, panel: -0.1 } } });
+  assert.equal(G.paintedGlass(st, 'light', pv).dimAuto, false, 'the preview paints Manual at once');
+  // Auto hands it back: dimAuto true, the value stays
+  const back = G.withPreview(pv, { dimAuto: true }, 'light');
+  assert.deepEqual(G.savePartial(back), { glass: { light: { dim: 0.6, dimAuto: true, panel: -0.1 } } });
   assert.deepEqual(G.savePartial(G.withPreview(null, { blur: 8 }, 'dark')), { glass: { dark: { blurPx: 8 } } }, 'dark sliders still save glass.dark');
   // theme flipped mid-drag: the other theme's values are dropped, not filed under this theme; photo/mode kept
   const flipped = G.withPreview({ dim: 0.6, file: 'a.jpg', theme: 'dark' }, { blur: 20 }, 'light');
@@ -439,7 +454,11 @@ test('glass per theme: light paints glass.light (blur, dim, panel); sliders made
   // the host takes it: glass.light changes, glass.dark and the legacy dark mirror do not
   const { settings } = makeSettings({ background: { file: 'snow-peak.jpg', blur: 5, dim: 0.5 }, theme: 'light' });
   settings.set(G.savePartial(pv));
-  assert.deepEqual(settings.get().glass.light, { blurPx: 5, dim: 0.6, panel: -0.1 });
+  assert.deepEqual(settings.get().glass.light, { blurPx: 5, dim: 0.6, panel: -0.1, dimAuto: false });
+  settings.set({ glass: { light: { dimAuto: true } } });
+  assert.equal(settings.get().glass.light.dimAuto, true, 'Auto: dimAuto true, the value stays');
+  assert.equal(settings.get().glass.light.dim, 0.6);
+  assert.throws(() => settings.set({ glass: { dark: { dimAuto: 'yes' } } }), /glass.dark.dimAuto must be true or false/);
   assert.deepEqual(settings.get().glass.dark, { blurPx: 5, dim: 0.5, panel: 0 });
   assert.equal(settings.get().background.dim, 0.5, 'the legacy mirror stays the dark glass');
 });
@@ -454,8 +473,10 @@ test('desktop.guard flows from Mantle\'s record; a glass change makes it stale w
   const { look } = makeLook(ctx, dir);
   look.start();
   await until(() => look.state().sync.state === 'ok');
+  ctx.settings.set({ glass: { dark: { blurPx: 5, dim: 0.5 } } });   // the seed (blur 0 / dim .30) may have been adopted
   const mantle = LS.create({ app: 'mantle', dir, enabled: true });
   const publish = (extra) => mantle.publishDesktop({ ok: true, reason: null, id: 'builtin:snow-peak', type: 'builtin', title: 'Snow peak', file: null, still, stillSize: null, ...extra });
+  const paint = () => washFor({ theme: 'dark', ...ctx.settings.get().glass.dark }, 'desktop', look.state().desktop);
   try {
     assert.equal(look.state().desktop.guard, null);
     let r = await publish({ guard: { dark: { ...GUARD, alpha: 0.56 } } });
@@ -464,14 +485,18 @@ test('desktop.guard flows from Mantle\'s record; a glass change makes it stale w
     assert.ok(d, 'guard arrived: ' + JSON.stringify(look.state().desktop));
     assert.deepEqual(d.guard, { alpha: 0.56, dim: 0.5, blurPx: 5 });
     assert.equal(d.guardReason, null);
-    assert.equal(washFor({ theme: 'dark', ...ctx.settings.get().glass.dark }, 'desktop', d).dim, 0.56, 'Helm paints the shared alpha');
+    assert.equal(d.record.still, 'wall-5.jpg', 'the record reaches the page with only the still file name');
+    assert.equal(d.unusable, null);
+    assert.equal(paint().alpha, 0.56, 'Automatic: Helm paints max(dim, the shared alpha)');
+    assert.equal(paint().raised, true);
 
     // Helm's dim changes: the guard Mantle computed for .50 is stale until Mantle republishes
     ctx.settings.set({ glass: { dark: { dim: 0.6 } } });
     d = await until(() => (look.state().desktop.guard === null ? look.state().desktop : null), 1000);
     assert.ok(d, 'went stale: ' + JSON.stringify(look.state().desktop));
     assert.match(d.guardReason, /out of date: worked out for dim 0\.50/);
-    assert.equal(washFor({ theme: 'dark', ...ctx.settings.get().glass.dark }, 'desktop', d).dim, 0.6, 'falls back to the dim');
+    assert.equal(paint().alpha, 0.6, 'falls back to the dim');
+    assert.match(paint().reason, /waiting for Mantle/);
 
     // Mantle republishes for the new glass
     r = await publish({ guard: { dark: { ...GUARD, alpha: 0.64, dim: 0.6 } } });
@@ -490,6 +515,8 @@ test('desktop.guard flows from Mantle\'s record; a glass change makes it stale w
     d = await until(() => (look.state().desktop.guard === null ? look.state().desktop : null), 1500);
     assert.ok(d, 'off ignores it: ' + JSON.stringify(look.state().desktop));
     assert.match(d.guardReason, /Look Sync is off/);
+    assert.match(d.unusable, /Look Sync is off/);
+    assert.equal(paint().alpha, 0.6, 'off: the dim'); assert.match(paint().reason, /Look Sync is off/);
   } finally { mantle.close(); look.close(); }
 });
 
@@ -515,21 +542,25 @@ test('desktop.guard.light flows from Mantle\'s record into the light wash; a lig
     assert.ok(d, JSON.stringify(look.state().desktop));
     assert.equal(d.guardLight, null);
     assert.equal(d.guardLightReason, 'light top band not published by Mantle yet');
-    assert.deepEqual(paint(), { dim: 0.45, used: false, reason: 'light top band not published by Mantle yet' });
+    assert.equal(paint().alpha, 0.45); assert.equal(paint().raised, false);
+    assert.match(paint().reason, /has not published the light top band/);
 
     // guard.light published for the synced light glass: Helm's light wash = its alpha
     await publish({ guard: { dark: GUARD, light: { ...GUARD_L, alpha: 0.57 } } });
     d = await until(() => (look.state().desktop.guardLight ? look.state().desktop : null), 1500);
     assert.ok(d, 'light guard arrived: ' + JSON.stringify(look.state().desktop));
     assert.deepEqual(d.guardLight, { alpha: 0.57, dim: 0.45, blurPx: 12 });
-    assert.equal(paint().dim, 0.57, 'Helm paints the shared white alpha');
+    assert.equal(paint().alpha, 0.57, 'Helm paints the shared white alpha');
 
     // the light dim moves: stale until Mantle republishes; the dark guard is untouched
     ctx.settings.set({ glass: { light: { dim: 0.5 } } });
     d = await until(() => (look.state().desktop.guardLight === null ? look.state().desktop : null), 1000);
     assert.ok(d, 'went stale: ' + JSON.stringify(look.state().desktop));
     assert.match(d.guardLightReason, /light top band is stale: worked out for dim 0\.45/);
-    assert.equal(paint().dim, 0.5, 'falls back to the light dim');
-    assert.match(paint().reason, /stale/);
+    assert.equal(paint().alpha, 0.5, 'falls back to the light dim');
+    assert.match(paint().reason, /waiting for Mantle/);
+    // Manual: exactly the dim, whatever Mantle publishes
+    ctx.settings.set({ glass: { light: { dim: 0.45, dimAuto: false } } });
+    assert.equal(paint().alpha, 0.45); assert.equal(paint().mode, 'manual'); assert.equal(paint().text, 'Manual: 0.45');
   } finally { mantle.close(); look.close(); }
 });

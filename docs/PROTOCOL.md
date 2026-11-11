@@ -178,8 +178,8 @@ Look Sync keys (lane look-sync, 2026-10-10; see "Look Sync" below):
 { background: { kind: "image", mode: "desktop" | "own", file, blur, dim },  // mode default "desktop"
   accentHue: null | 0..360,              // whole number; null = Helm's own accent
   accentTokens: null | { dark, light },  // derived from accentHue (main/accent.js); read-only, settings.set drops it
-  glass: { dark:  { blurPx: 0..64, dim: 0.20..0.90, panel: -0.30..0.15 },
-           light: { blurPx, dim, panel },
+  glass: { dark:  { blurPx: 0..64, dim: 0.20..0.90, panel: -0.30..0.15, dimAuto?: bool },   // seed 0 / .30 / 0
+           light: { blurPx, dim, panel, dimAuto? },   // dimAuto absent = true (Automatic); the Dim slider writes false
            render: "picture" | "seeThrough" },
   lookSync: { enabled: true } }
 ```
@@ -1304,7 +1304,14 @@ LookState = {
              // its dim + blurPx equal to settings.glass.light; the LIGHT theme paints it in 'desktop' mode.
              // Otherwise null + guardLightReason ("light top band not published by Mantle yet", "... is stale: ...").
              guardLight: { alpha, dim, blurPx } | null,
-             guardLightReason: string | null },
+             guardLightReason: string | null,
+             // The one tint (CONTRACT "2026-11-11: sharp painted glass + tint override"). The page paints
+             // --bg-dim = look-sync washAlpha(glass painted now, record, theme, { unusable }) on EVERY screen
+             // (ui/lib/wash.js, vendored as ui/lib/look-pure.js): Manual (glass.<theme>.dimAuto false) = the dim;
+             // Automatic = max(dim, record.guard.<theme>.alpha) when valid, else the dim + the reason. guard /
+             // guardLight above stay for the log and older pages. main/look.js washInputs builds these two:
+             record: { ok, still: "<file name only>" | null, reason, guard, guardReason } | null,   // Mantle's record, as washAlpha reads it
+             unusable: string | null },   // why its top band does not apply to what Helm paints (sync off, not Mantle's still)
   dir: "C:\\Users\\you\\AppData\\Roaming\\look-sync",
   mantleOpen: { available: false, reason: "Helm can't open Mantle's Wallpapers yet: ..." } }   // see look.openMantle
 ```

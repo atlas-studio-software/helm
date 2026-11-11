@@ -193,7 +193,8 @@ async function main() {
     {
       const lv = await ev(`(async () => { const st = (await import('/lib/store.js')).settings.value; const cs = getComputedStyle(document.documentElement);
         return { blur: cs.getPropertyValue('--bg-blur').trim(), dim: cs.getPropertyValue('--bg-dim').trim(), panel: cs.getPropertyValue('--glass-panel').trim(), wash: getComputedStyle(document.querySelector('.bg-wash')).backgroundColor, dark: st.glass.dark, light: st.glass.light }; })()`);
-      check('3 light theme paints glass.light (blur, dim, panel) under a white wash', lv.blur === `${lv.light.blurPx}px` && Number(lv.dim) === lv.light.dim
+      // sharp glass (look-sync CONTRACT "2026-11-11"): the desktop window never blurs its picture (--bg-blur 0px)
+      check('3 light theme paints glass.light (dim, panel) under a white wash, sharp (no blur)', lv.blur === '0px' && Number(lv.dim) === lv.light.dim
         && Number(lv.panel) === lv.light.panel && /^rgba\(255, 255, 255, /.test(lv.wash || ''), J(lv));
     }
     w = writer(['set', 'accent', '30']);
@@ -218,8 +219,10 @@ async function main() {
     const pubOk = !!(lf && lf.look && lf.look.glass && lf.look.glass.v.dark.blurPx === 9 && lf.writer && lf.writer.app === 'helm');
     check('4 publish: settings.set glass.dark.blurPx 9 -> look.json glass.v.dark.blurPx 9, writer helm, within 1 s', !set4.error && pubOk,
       `${Date.now() - t0} ms; ${J({ error: set4.error, blurPx: lf && lf.look && lf.look.glass && lf.look.glass.v.dark.blurPx, writer: lf && lf.writer && lf.writer.app, rev: lf && lf.rev })}`);
-    const blur9 = await pollPage(VAR('--bg-blur'), (v) => v === '9px', 1000);
-    check('4 publish: the page shows --bg-blur 9px', blur9.ok, J(blur9.v));
+    const blur9 = await pollPage(VAR('--bg-blur'), (v) => v === '0px', 1000);
+    check('4 publish: the desktop window stays sharp (--bg-blur 0px) whatever glass.blurPx says', blur9.ok, J(blur9.v));
+    const sharp4 = await ev(`(() => { const b = document.querySelector('.bg'); const ph = b && b.querySelector('.bg-photo'); return b ? { sharp: b.dataset.sharp, filter: ph ? getComputedStyle(ph).filter : null, clear: !!b.querySelector('.bg-clear') } : null; })()`);
+    check('4 sharp: data-sharp=1, the picture layer has no filter, no Home copy', !!sharp4 && sharp4.sharp === '1' && (sharp4.filter === 'none' || sharp4.filter === null) && !sharp4.clear, J(sharp4));
 
     // ---------- 5. the switch ----------
     n = c.events.length;
@@ -425,13 +428,14 @@ async function main() {
       rec.ok ? `${rec.ms} ms` : J({ writer: w.out, last: c.events.slice(n).filter((e) => e.event === 'look.updated').map((e) => ({ state: e.data.sync.state, reason: e.data.sync.reason, desktop: e.data.desktop && e.data.desktop.source })).slice(-2) }));
     // the fake writer's record has no guard: the dim, and the Appearance status says why
     gd = await ev(GD);   // the file was rebuilt above: the glass may be back on the seed
-    const GLINE = `(() => { const el = document.querySelector('#set-appearance .look-guard'); return el ? el.textContent.replace(/\\s+/g, ' ').trim() : null; })()`;
-    p = await pollPage(GLINE, (v) => !!v && /your dim/.test(v) && /hasn't shared a darkening/.test(v), 1500);
+    // the tint row (look-sync washAlpha text) is the Dim row's hint now (lane look-helm, 2026-11-11)
+    const GLINE = `(() => { const el = document.querySelector('#set-appearance .dim-mode'); return el ? el.textContent.replace(/\\s+/g, ' ').trim() : null; })()`;
+    p = await pollPage(GLINE, (v) => !!v && /^Automatic: /.test(v) && /not raised: Mantle has not published a top band/.test(v), 1500);
     const dim6 = await ev(VAR('--bg-dim'));
     check('10 guard: no guard -> the dim, and Settings > Appearance says why', p.ok && Number(dim6) === gd.dim, J({ line: p.v, dim: dim6 }));
     await publishGuard({ alpha: 0.8, contrast: 4.3, dim: gd.dim, blurPx: gd.blurPx });
-    p = await pollPage(GLINE, (v) => !!v && /Darkening 0\.80, shared with Mantle/.test(v), 1500);
-    check('10 guard: a fresh guard -> the status line says it is shared', p.ok, J(p.v));
+    p = await pollPage(GLINE, (v) => !!v && /raised to 0\.80/.test(v), 1500);
+    check('10 guard: a fresh guard -> the Dim row says Automatic, raised to 0.80', p.ok, J(p.v));
     const lay10 = await ev(`(() => { const d = document.querySelector('#set-appearance .look-desk'); d.scrollIntoView({ block: 'center' });
       const r = (s) => { const e = d.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
       const rb = d.getBoundingClientRect(); return { info: r('.look-desk-info'), open: r('.look-desk-open'), row: { l: rb.left, r: rb.right, t: rb.top, b: rb.bottom } }; })()`);

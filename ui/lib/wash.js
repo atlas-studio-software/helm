@@ -1,34 +1,30 @@
-// Shared top-band wash (look-sync CONTRACT "Shared top-band darkening (desktop.guard)" and "Light look"): which wash
-// alpha (--bg-dim) Helm paints. Following the desktop, it is Mantle's shared alpha for the theme showing (dark:
-// desktop.guard.dark, light: desktop.guard.light, the white that keeps ink-2 at 4.7:1), so Mantle's top bar, Quartz's
-// strip and Helm match on every photo. The host validates both (main/look.js checkGuard / checkGuardLight); here the
-// one for this theme is re-checked against the glass being PAINTED, so dragging the dim or blur slider shows the
-// slider's value until Mantle republishes. Own picture: the dim as set. Never silent: a fallback carries its reason.
-// ESM with no imports, so test/host/look.test.js loads it with require(esm). Owner: lane guard-helm / wk-light.
+// The one tint (look-sync CONTRACT "2026-11-11: sharp painted glass + tint override"): the wash alpha (--bg-dim) Helm
+// lays over the sharp painted picture on EVERY screen (Home included: no scrim of its own), so the Dim the user sets
+// controls all of it. The rule is look-sync's washAlpha (vendored into ui/lib/look-pure.js, the same code Quartz and
+// Mantle run): Manual (glass.<theme>.dimAuto false) = exactly Dim; Automatic (absent / true) = max(Dim,
+// desktop.guard.<theme>.alpha) when Mantle's top band is valid, else Dim, with the reason. Never silent: the result's
+// `text` is the Settings > Appearance row. ESM with one sibling import, so test/host/look.test.js loads it with
+// require(esm). Owner: lane look-helm (sharp glass).
+import { washAlpha } from './look-pure.js';
 
-const near = (a, b) => Math.abs(+a - +b) < 0.005;
-
-// what the reason says when the host is older than the light guard (no guardLight fields at all)
-export const NO_LIGHT_GUARD = 'light top band not published by Mantle yet';
+// own picture: Mantle's top band describes the desktop still, not the photo Helm paints instead
+export const OWN_PICTURE = 'your own picture shows, so Mantle\'s top band for the desktop does not apply';
+export const NO_HOST_RECORD = "Helm's host has not passed on Mantle's desktop record (an older host)";
 
 /**
  * washFor(g, mode, desktop)
- *   g: { theme: 'dark'|'light', dim, blurPx } (the glass painted now, previews included)
- *   mode: background.mode ('desktop' | 'own'); desktop: LookState.desktop (guard / guardReason, guardLight / guardLightReason)
- * -> { dim, used, reason }   reason: why the shared value is not used (null when used or when it does not apply)
+ *   g: the glass painted now { theme: 'dark'|'light', dim, blurPx, dimAuto } (ui/lib/glass.js paintedGlass, previews in)
+ *   mode: background.mode ('desktop' | 'own')
+ *   desktop: LookState.desktop from the host ({ record, unusable, ... }: main/look.js washInputs), or null
+ * -> washAlpha's { alpha, mode: 'auto'|'manual', raised, reason, dim, contrast, text }
  */
 export function washFor(g, mode, desktop) {
-  if (mode !== 'desktop') return { dim: g.dim, used: false, reason: null };
-  const light = g.theme === 'light';
-  const gd = (desktop && (light ? desktop.guardLight : desktop.guard)) || null;
-  if (!gd) {
-    const why = desktop && (light ? desktop.guardLightReason : desktop.guardReason);
-    return { dim: g.dim, used: false, reason: why || (light ? NO_LIGHT_GUARD : "Mantle hasn't shared a darkening for this wallpaper") };
-  }
-  if (!near(gd.dim, g.dim) || !near(gd.blurPx, g.blurPx)) {
-    const what = light ? "Mantle's light top band is stale: it" : "Mantle's shared darkening";
-    return { dim: g.dim, used: false,
-      reason: `${what} was worked out for dim ${(+gd.dim).toFixed(2)} / blur ${gd.blurPx}px; waiting for it to catch up with dim ${(+g.dim).toFixed(2)} / blur ${g.blurPx}px` };
-  }
-  return { dim: gd.alpha, used: true, reason: null };
+  const t = g && g.theme === 'light' ? 'light' : 'dark';
+  const look = { glass: { [t]: { dim: g?.dim, blurPx: g?.blurPx, ...(g?.dimAuto === false ? { dimAuto: false } : {}) } } };
+  let unusable = null;
+  if (mode !== 'desktop') unusable = OWN_PICTURE;
+  else if (!desktop) unusable = "Helm hasn't heard from its host which desktop picture shows yet";
+  else if (desktop.unusable) unusable = desktop.unusable;
+  else if (desktop.record === undefined) unusable = NO_HOST_RECORD;
+  return washAlpha(look, desktop ? desktop.record ?? null : null, t, unusable ? { unusable } : undefined);
 }

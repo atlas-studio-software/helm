@@ -109,6 +109,23 @@ function sniff(file) {
 }
 
 /**
+ * washInputs(record, { syncOn, source }, sourceReason) -> { record, unusable }: what the renderer hands to look-sync's
+ * washAlpha (CONTRACT "2026-11-11: sharp painted glass + tint override"; ui/lib/wash.js). record: the fields of
+ * Mantle's desktop record washAlpha reads (the still's file name only, never its path). unusable: why the record's
+ * top band does not apply to what Helm paints right now (sync off, not Mantle's still), else null.
+ */
+function washInputs(rec, { syncOn, source }, sourceReason) {
+  const record = rec && typeof rec === 'object'
+    ? { ok: rec.ok, still: typeof rec.still === 'string' && rec.still ? path.basename(rec.still) : null,
+      reason: rec.reason ?? null, guard: rec.guard ?? null, guardReason: rec.guardReason ?? null }
+    : null;
+  const unusable = !syncOn ? "Look Sync is off, so Mantle's top band is not used"
+    : source !== 'mantle' ? `Helm is not painting Mantle's picture${sourceReason ? ` (${sourceReason})` : ''}`
+    : null;
+  return { record, unusable };
+}
+
+/**
  * createLook({ settings, emit, log, dir?, windowsWallpaper?, syncOpts? })
  *   settings: main/settings.js store (get, applyLook, lookValues)
  *   dir: the shared folder (default: LOOK_SYNC_DIR or %APPDATA%\look-sync; main.js gives --test runs a temp one)
@@ -153,7 +170,7 @@ function createLook(opts) {
   }));
 
   let syncState = sync.status();
-  let desktop = { source: 'none', ok: false, url: null, rev: null, title: null, type: null, id: null, size: null, reason: 'Not started', file: null, mime: null, guard: null, guardReason: 'Not started', guardLight: null, guardLightReason: 'Not started' };
+  let desktop = { source: 'none', ok: false, url: null, rev: null, title: null, type: null, id: null, size: null, reason: 'Not started', file: null, mime: null, guard: null, guardReason: 'Not started', guardLight: null, guardLightReason: 'Not started', record: null, unusable: 'Not started' };
   let lastSent = null;
 
   function publicState() {
@@ -202,7 +219,7 @@ function createLook(opts) {
   function updateDesktop() {
     const next = computeDesktop();
     const rec = sync.desktop().record, gl = settings.get().glass || {}, how = { syncOn: sync.enabled, source: next.source };
-    Object.assign(next, checkGuard(rec, gl.dark, how), checkGuardLight(rec, gl.light, how));
+    Object.assign(next, checkGuard(rec, gl.dark, how), checkGuardLight(rec, gl.light, how), washInputs(rec, how, next.reason));
     if (!same(next, desktop)) {
       const prev = desktop;
       desktop = next;
@@ -273,4 +290,4 @@ function createLook(opts) {
   };
 }
 
-module.exports = { createLook, checkGuard, checkGuardLight };
+module.exports = { createLook, checkGuard, checkGuardLight, washInputs };

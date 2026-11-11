@@ -93,7 +93,10 @@ function Backgrounds() {
   const lookName = theme === 'light' ? 'light look' : 'dark look';
   const mode = b.mode === 'own' ? 'own' : 'desktop';
   const blur = num(pv.blur, num(g.blurPx, num(b.blur, 28)));
-  const dim = num(pv.dim, num(g.dim, num(b.setDim, 0.45)));   // the slider is the dim as set, not the shared darkening
+  const dim = num(pv.dim, num(g.dim, num(b.setDim, 0.3)));   // the slider is the dim as set, not the raised wash
+  // the one tint (look-sync washAlpha, ui/lib/wash.js): Automatic / Manual and why, for the theme showing
+  const w = b.wash;
+  const auto = w.mode === 'auto';
   const panel = num(pv.panel, num(g.panel, num(b.panel, 0)));
   const fileInput = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -173,7 +176,9 @@ function Backgrounds() {
   </button>`;
   const setMode = (m) => { if (m !== mode) live({ mode: m }); };
   return html`
-    <${Row} label="Background" hint=${mode === 'desktop' ? 'Following your desktop wallpaper — change it in Mantle.' : 'Pick a photo. It is blurred once behind every panel, and changes as you click.'} stack>
+    <${Row} label="Background" hint=${mode === 'desktop'
+      ? (b.sharp ? 'Following your desktop wallpaper, sharp and lined up with the screen — change it in Mantle.' : 'Following your desktop wallpaper — change it in Mantle.')
+      : (b.sharp ? 'Pick a photo. It shows sharp behind every panel, and changes as you click.' : 'Pick a photo. It is blurred once behind every panel, and changes as you click.')} stack>
       <div class="seg bg-mode" role="radiogroup" aria-label="Background source">
         ${BG_MODES.map((o) => html`<button key=${o.v} role="radio" aria-checked=${mode === o.v} aria-pressed=${mode === o.v} onClick=${() => setMode(o.v)}><${Icon} name=${o.i} size=${13} />${o.l}</button>`)}
       </div>
@@ -200,13 +205,18 @@ function Backgrounds() {
         </div>
       </div>`}
     <//>
-    <${Row} label="Blur" hint=${`${Math.round(blur)} px · ${lookName}`}>
+    ${!b.sharp && html`<${Row} label="Blur" hint=${`${Math.round(blur)} px · ${lookName} · phone`}>
       <input class="range" type="range" min="0" max="64" step="1" value=${clamp(blur, 0, 64)} aria-label=${`Background blur, ${lookName}`}
         onInput=${(e) => live({ blur: +e.currentTarget.value })} />
-    <//>
-    <${Row} label="Dim" hint=${`${Math.round(dim * 100)}% · ${lookName}`}>
-      <input class="range" type="range" min="0.2" max="0.9" step="0.01" value=${clamp(dim, 0.2, 0.9)} aria-label=${`Background dim, ${lookName}`}
-        onInput=${(e) => live({ dim: +e.currentTarget.value })} />
+    <//>`}
+    <${Row} label="Dim" hint=${html`<span class="dim-mode" data-mode=${w.mode}>${w.text}</span> · ${lookName}`}>
+      <div class="dim-ctl">
+        <input class="range" type="range" min="0.2" max="0.9" step="0.01" value=${clamp(dim, 0.2, 0.9)} aria-label=${`Background dim, ${lookName}`}
+          onInput=${(e) => live({ dim: +e.currentTarget.value })} />
+        <button type="button" class="btn btn-ghost btn-sm dim-auto" aria-pressed=${auto}
+          data-tip=${auto ? "Automatic: Helm raises the tint where a picture needs it (Mantle's top band)" : 'Hand the tint back to Automatic (your Dim stays as the floor)'}
+          onClick=${() => { if (!auto) live({ dimAuto: true }); }}>Auto</button>
+      </div>
     <//>
     <${Row} label="See-through" hint=${`${panelHint(panel)} · ${lookName}`}>
       <input class="range" type="range" min="-0.3" max="0.15" step="0.01" value=${clamp(panel, -0.3, 0.15)} aria-label=${`Panel see-through, ${lookName}`}
@@ -229,20 +239,12 @@ function DesktopSource() {
   // until then text with the reason
   const mo = lookNow()?.mantleOpen || null;
   const openMantle = () => rpc('look.openMantle', {}).catch((e) => toast({ title: "Couldn't open Mantle", error: e, kind: 'error' }));
-  // Shared top band (look-sync CONTRACT "desktop.guard" + "Light look"): which wash shows, and why, in either theme
-  // (dark: the darkening; light: the white that keeps the secondary text readable on this photo)
-  const w = background.value.wash;
-  const light = resolvedTheme.value === 'light';
-  const what = light ? 'White wash' : 'Darkening';
-  const washText = !d ? null
-    : w.used ? `${what} ${w.dim.toFixed(2)}, shared with Mantle and Quartz so the top bars match on this photo`
-    : `${what} ${(+w.dim).toFixed(2)} (your dim): ${w.reason}`;
+  // The tint over this picture (Automatic / Manual and why) is the Dim row's hint: one place, both modes.
   return html`<div class="look-desk">
     ${url && thumbOk ? html`<img class="look-desk-thumb" src=${url} alt="" draggable="false" decoding="async" onError=${() => setThumbOk(false)} />`
       : html`<span class="look-desk-thumb none" aria-hidden="true"></span>`}
     <div class="look-desk-info">
       <p class=${cx('look-desk-text', tone)}>${tone && html`<${Icon} name="alert" size=${13} />`}<span>${text}</span>${d?.rev != null && html`<span class="look-rev">rev ${d.rev}</span>`}</p>
-      ${washText && html`<p class=${cx('look-desk-text', 'look-guard', !w.used && 'warn')}>${!w.used && html`<${Icon} name="alert" size=${13} />`}<span>${washText}</span></p>`}
     </div>
     ${mo?.available ? html`<button type="button" class="btn btn-ghost btn-sm look-desk-open" onClick=${openMantle}>Change it in Mantle's Wallpapers</button>`
       : html`<p class="hint look-desk-open">Change it in Mantle's Wallpapers.${mo?.reason ? ` ${mo.reason}` : ''}</p>`}

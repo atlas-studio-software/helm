@@ -64,7 +64,7 @@ effect(() => {
   root.dataset.themePref = themePref.value;
 });
 
-// ---- background (one blurred layer; values live-previewable while a slider drags) ----
+// ---- background (one picture layer + one wash; values live-previewable while a slider drags) ----
 // Look Sync (PROTOCOL "Look Sync"): background.mode 'desktop' paints the desktop wallpaper still (/bg/desktop),
 // lined up with the screen on the desktop window; 'own' paints the picked file as before. Blur / dim / panel
 // come from settings.glass for the theme showing now (shared with Quartz + Mantle while lookSync is on).
@@ -84,8 +84,12 @@ export const background = computed(() => {
   const desktop = look.value?.desktop || null;
   const url = mode === 'desktop' ? desktop?.url || null : bgUrl(file);
   const g = glass.value;
-  const wash = washFor(g, mode, desktop);   // following the desktop: Mantle's shared top band for this theme (ui/lib/wash.js)
-  return { kind: 'image', mode, file, url, blur: g.blurPx, dim: wash.dim, setDim: g.dim, wash, panel: g.panel, desktop, lineUp: mode === 'desktop' && !!url && canLineUp };
+  const wash = washFor(g, mode, desktop);   // the one tint, every screen: look-sync washAlpha (ui/lib/wash.js)
+  // SHARP (CONTRACT "2026-11-11: sharp painted glass + tint override"): the desktop window paints its picture with
+  // no blur and no saturate in both themes, whatever glass.blurPx says (it stays synced: Mantle's top band is worked
+  // out at it). The phone has no screen to line up with and keeps its blurred layer as before.
+  const sharp = canLineUp;
+  return { kind: 'image', mode, file, url, blur: sharp ? 0 : g.blurPx, sharp, dim: wash.alpha, setDim: g.dim, wash, panel: g.panel, desktop, lineUp: mode === 'desktop' && !!url && canLineUp };
 });
 effect(() => {
   const b = background.value, s = document.documentElement.style;
@@ -135,7 +139,9 @@ export function toggleSidebar() {
 //   'to'   the layout slides away and the clear wallpaper fades in (HOME_TO_MS), then Home commits
 //   'from' just left Home: the panels slide back in and the clear wallpaper fades out (HOME_FROM_MS)
 // Only opacity/transform animate (compositor-only); the wallpaper blur is never animated: shell/chrome.js
-// cross-fades an unblurred copy over the blurred layer, and the blurred one is hidden while Home shows.
+// cross-fades an unblurred copy over the blurred layer, and the blurred one is hidden while Home shows. That
+// copy is the PHONE only now: the desktop window paints one sharp picture on every screen (background.sharp), so
+// going Home moves the panels and nothing in the wallpaper changes.
 // The shared motion tokens (styles/tokens.css): the way out is a leave (--m-dur-s x .45 on --m-accel), the way
 // back is an arrival (--m-dur-s on --m-spring); size class s because the panels travel only 8-20 px. Keep these
 // equal to home.css.
