@@ -1,4 +1,4 @@
-// VENDORED from the look-sync project: the pure (browser-safe) block of look-sync.js at commit 6a1b753, as an ES
+// VENDORED from the look-sync project: the pure (browser-safe) block of look-sync.js at commit 44f9ad5, as an ES
 // module for the page (ui/lib/wash.js). Do not edit here: change look-sync and run node tools/vendor-look-sync.js.
 // test/host/look-pure.test.js checks it matches main/look-sync.js. Spec: ~/look-sync/CONTRACT.md.
 
@@ -47,7 +47,8 @@ const a2 = n => (typeof n === 'number' && Number.isFinite(n) ? n.toFixed(2) : JS
  * Automatic (dimAuto absent or true): max(Dim, desktop.guard.<theme>.alpha)
  * when that guard is valid (an alpha 0..1, worked out for this Dim and blur,
  * at most max(.88, Dim)), else Dim, with the reason.
- * -> { alpha, mode: 'auto'|'manual', raised, reason, dim, contrast, text }
+ * -> { alpha, mode: 'auto'|'manual', raised, guarded, reason, dim, contrast, text }
+ *    guarded = Mantle's top band was valid and taken into the max (auto only).
  *    text is the Settings row, e.g. "Automatic: 0.30, raised to 0.46 so text
  *    stays readable over this picture" or "Manual: 0.20". Never throws.
  */
@@ -63,13 +64,13 @@ function washAlpha(look, desktop, theme, opts) {
   const badDim = dimOk ? null
     : 'glass.' + t + '.dim is missing or outside ' + a2(RANGES.dim[0]) + '-' + a2(RANGES.dim[1]) + ', so the default ' + a2(seed.dim);
   if (g && g.dimAuto === false) {
-    return { alpha: dim, mode: 'manual', raised: false, dim, contrast: null,
+    return { alpha: dim, mode: 'manual', raised: false, guarded: false, dim, contrast: null,
       reason: badDim || 'Dim is set by hand, so the picture never changes it',
       text: 'Manual: ' + a2(dim) + (badDim ? ' (' + badDim + ')' : '') };
   }
   const plain = why => {
     why = badDim ? badDim + '; ' + why : why;
-    return { alpha: dim, mode: 'auto', raised: false, dim, contrast: null, reason: why,
+    return { alpha: dim, mode: 'auto', raised: false, guarded: false, dim, contrast: null, reason: why,
       text: 'Automatic: ' + a2(dim) + ', not raised: ' + why };
   };
   const o = isObj(opts) ? opts : {};
@@ -100,12 +101,12 @@ function washAlpha(look, desktop, theme, opts) {
   if (a > ceil + 1e-9) return plain("Mantle's " + t + ' top band ' + a2(a) + ' is above the ' + a2(ceil) + ' ceiling');
   const contrast = isNum(e.contrast) ? e.contrast : null;
   if (a > dim + 1e-9) {
-    return { alpha: a, mode: 'auto', raised: true, dim, contrast,
+    return { alpha: a, mode: 'auto', raised: true, guarded: true, dim, contrast,
       reason: 'raised to ' + a2(a) + ' so text stays readable over this picture',
       text: 'Automatic: ' + a2(dim) + ', raised to ' + a2(a) + ' so text stays readable over this picture' };
   }
   const why = badDim ? badDim + '; ' : '';
-  return { alpha: dim, mode: 'auto', raised: false, dim, contrast,
+  return { alpha: dim, mode: 'auto', raised: false, guarded: true, dim, contrast,
     reason: why + 'text already reads over this picture at this Dim',
     text: 'Automatic: ' + a2(dim) + ', ' + why + 'text already reads over this picture at this Dim' };
 }
