@@ -13,6 +13,10 @@
 //   t.checkReparent(id, newParent)             -> [errors]
 //   t.withParent(id, newParent)                -> a new tree with that one change (for previews)
 //   t.planRetire(id, mode)                     -> { ok, errors, retire: [ids, deepest first], moves: [{ id, from, to }] }
+//   t.departmentOf(id)                         -> { name, head } | null (the top-level ancestor's department; null: none
+//                                                 or a broken line). A department = a name on a top-level position (its head)
+//   t.departments()                            -> [{ name, head, members: [ids below the head, breadth first] }], CEO's report order
+//   t.checkDepartment(name, { except })        -> [errors]   (the name is taken by another head; except: the head being renamed)
 //   t.effective(id, ctx)                       -> effective powers (own ∩ every ancestor's) + limitedBy
 //   t.excess(powers, parent, ctx, selfCtx)     -> [{ power, value, ... }] what a draft lists beyond its manager
 //   t.widens(id, request, ctx)                 -> { ancestors: [ids nearest first], beyondCompany } for "Approve always"
@@ -199,6 +203,35 @@ function createTree(positions) {
     return { ok: errors.length === 0, errors, retire: [id], moves: mine.map((r) => ({ id: r, from: id, to })) };
   }
 
+  // ---------- departments (docs/POSITIONS.md 2.4) ----------
+  // A department is a name on a top-level position (parent null), its HEAD; every position below the head is in it.
+  // Staff never store it, so it is derived from the top-level ancestor. Names compare case-insensitively, whitespace
+  // collapsed (departmentKey). No sub-departments: a `department` below the top level never validates.
+  function topOf(id) {
+    if (!has(id)) return null;
+    const w = walk(id);
+    if (w.broken) return null;
+    return w.chain.length ? w.chain[w.chain.length - 1] : id;
+  }
+  function departmentOf(id) {
+    const head = topOf(id);
+    const p = head ? get(head) : null;
+    return p && p.parent == null && p.department ? { name: p.department, head } : null;
+  }
+  // in the CEO's report order; members = every position below the head, breadth first
+  function departments() {
+    return reports(null)
+      .filter((id) => get(id).department)
+      .map((head) => ({ name: get(head).department, head, members: subtree(head) }));
+  }
+  // errors when another head already uses this name (except: the head being renamed)
+  function checkDepartment(name, { except = null } = {}) {
+    const k = departmentKey(name);
+    if (!k) return [];
+    const clash = reports(null).find((id) => id !== except && get(id).department && departmentKey(get(id).department) === k);
+    return clash ? [`department: "${get(clash).department}" already exists in this company (headed by "${clash}"); pick another name, or put the position under that head`] : [];
+  }
+
   // ---------- powers ----------
   const ROOT = (ctx) => {
     const folders = S.expandPathTokens(ctx.companyFolders || [], ctx);
@@ -362,8 +395,12 @@ function createTree(positions) {
     ids: () => [...byId.keys()],
     liveCount: () => byId.size,
     checkCreate, checkReparent, withParent, planRetire,
+    departmentOf, departments, checkDepartment,
     effective, excess, widens, cutsAfterReparent,
   };
 }
 
-module.exports = { createTree, intersectPaths, subset, globBase, CEO };
+// a department name's comparison key: case-insensitive, whitespace collapsed ('' for none)
+function departmentKey(name) { return String(name == null ? '' : name).replace(/\s+/g, ' ').trim().toLowerCase(); }
+
+module.exports = { createTree, intersectPaths, subset, globBase, departmentKey, CEO };

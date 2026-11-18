@@ -36,6 +36,11 @@ function line(it) {
   const name = it.draft && it.draft.name ? ` "${it.draft.name}"` : '';
   const extra = [];
   if (it.draft && it.draft.notebook) extra.push('notebook');
+  // department: a create (parent null) that heads one, or an edit that names, renames or closes it
+  const dep = it.draft ? it.draft.department : undefined;
+  const depName = typeof dep === 'string' ? dep.replace(/\s+/g, ' ').trim() : '';
+  if (depName) extra.push(`${it.action === 'create' ? 'heads' : 'department'} "${depName}"`);
+  else if (dep !== undefined && it.action === 'edit') extra.push('department: none (closes it)');
   if (it.draft && it.draft.seed && Array.isArray(it.draft.seed.files) && it.draft.seed.files.length) extra.push(`${it.draft.seed.files.length} seed file(s)`);
   return `  ok    ${it.ref}: ${it.action} ${it.target}${name}${parent}${extra.length ? ` [${extra.join(', ')}]` : ''}`;
 }
@@ -90,7 +95,7 @@ async function main() {
   try { r = await rpc(a.port, token, 'team.proposals.import', { json: text }); } catch (e) { console.error(`team-import: ${e.code ? `${e.code}: ` : ''}${e.message}`); return 1; }
   const imported = (r && r.imported) || [];
   const skipped = (r && r.skipped) || [];
-  for (const it of imported) console.log(`  open  ${it.ref}: ${it.action} ${it.target} -> ${it.id}`);
+  for (const it of imported) console.log(`  open  ${it.ref}: ${it.action} ${it.target} -> ${it.id}${it.title ? ` (${it.title})` : ''}`);
   for (const s of skipped) console.log(`  skip  ${s.ref == null ? '(file)' : s.ref}: ${s.reason}`);
   console.log(`team-import: ${imported.length} valid, ${skipped.length} skipped`);
   return 0;

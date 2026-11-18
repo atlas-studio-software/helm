@@ -704,6 +704,7 @@ function createTeamWiring(o = {}) {
         });
         const la = safe(() => lastActivityOf(c.id, id), null);
         if (la) rows[rows.length - 1].lastActivity = la;
+        const dp = safe(() => tr.departmentOf(id), null); if (dp) Object.assign(rows[rows.length - 1], { department: dp.name, departmentHead: dp.head });
         for (const k of safe(() => tr.reports(id), []) || []) walk(k, depth + 1);
       };
       for (const x of all) if (x.parent == null || !byId.has(x.parent)) walk(x.id, 1);

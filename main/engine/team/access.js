@@ -255,6 +255,8 @@ function createAccess({ store, sessions, emit, clock, log, waitMs, ownerName } =
     const access = {
       kind, target, why, position: { id: position, name, path: namePath(company, position) },
       ...(ancestors && ancestors.length ? { ancestors } : {}),
+      // "Approve always (also widens X)" names each manager by its real name, not its id
+      ...(ancestors && ancestors.length ? { names: Object.fromEntries(ancestors.map((a) => { const p = safeStore(() => store.getPosition(company, a), null); return [a, (p && p.name) || a]; })) } : {}),
       outward: !!outward,
       ...(onceOnly && !outward ? { onceOnly: true } : {}),
       ...(warn ? { warn: true } : {}),

@@ -447,3 +447,108 @@ test('owner name: instructions, tool descriptions and handler notes use deps.own
   const text = JSON.stringify([M.RECURRING_CEO, M.RECURRING_MANAGER, M.PROPOSE_NOTE, M.NO_ANSWER_NOTE]);
   assert.doesNotMatch(text, /\b(he|his|him)\b/, 'no pronoun for the owner');
 });
+
+// ---------- departments (2.4): grouped roster text, roster fields, the CEO-only `department` param ----------
+// makeStore's positions with real job titles and departments on the two heads, plus staff and one outside any
+function deptStore() {
+  const st = makeStore([
+    { id: 'contracts', name: 'Contracts Manager', parent: 'legal', remit: 'Supplier and customer contracts.', status: 'active' },
+    ...[1, 2, 3, 4, 5].map((i) => ({ id: `c${i}`, name: `Clerk ${i}`, parent: 'legal', remit: 'Filing.', status: 'active' })),
+    { id: 'social', name: 'Social Media Coordinator', parent: 'marketing', remit: 'Posts on every channel.', status: 'active' },
+    { id: 'qa', name: 'QA Engineer', parent: null, remit: 'Release checks.', status: 'active' },
+  ]);
+  const over = { legal: { name: 'General Counsel', department: 'Legal' }, marketing: { name: 'Marketing Manager', department: 'Marketing' } };
+  const fix = (p) => (p && over[p.id] ? { ...p, ...over[p.id] } : p);
+  const list = st.listPositions, get = st.getPosition;
+  st.listPositions = (cid) => list(cid).map(fix);
+  st.getPosition = (cid, pid) => fix(get(cid, pid));
+  return st;
+}
+
+test('departments: the CEO instructions group direct reports by department (staff capped at 6)', () => {
+  const s = M.instructionsFor(CEO, { store: deptStore() });
+  const lines = s.split('\n');
+  assert.deepEqual(lines.slice(0, 8), [
+    'Team of Example Co. Your direct reports (AI staff, each with its own chat):',
+    'Legal department:',
+    '- General Counsel (legal), head: Contracts, terms of service and privacy questions. · staff: Tax Specialist, Contracts Manager, Clerk 1, Clerk 2, Clerk 3, Clerk 4 and 2 more',
+    'Marketing department:',
+    '- Marketing Manager (marketing), head: Launch posts, positioning and the weekly roundup for every product. · staff: Social Media Coordinator',
+    'Not in a department:',
+    '- QA Engineer (qa): Release checks.',
+    'How to use them:',
+  ]);
+  assert.ok(!/SECRET-BRIEF|SECRET-NOTEBOOK/.test(s));
+});
+
+test('departments: with none, the CEO text and roster keep today\'s shape exactly', async () => {
+  const store = makeStore();
+  const s = M.instructionsFor(CEO, { store });
+  assert.deepEqual(s.split('\n').slice(0, 4), [
+    'Team of Example Co. Your direct reports (AI staff, each with its own chat):',
+    '- Legal (legal): Contracts, terms of service and privacy questions. · 2 below',
+    '- Marketing (marketing): Launch posts, positioning and the weekly roundup for every product.',
+    'How to use them:',
+  ]);
+  assert.ok(!/department:|, head:|staff:/.test(s));
+  const tax = M.instructionsFor(TAX, { store });
+  assert.match(tax, /^You are Tax Specialist on Example Co's team\. You report to Legal: /);
+  assert.ok(tax.includes('Colleagues (colleague_ask): Legal (legal): '));
+  const r = await M.handlersFor(CEO, { store, runtime: makeRuntime() }).team_roster({});
+  assert.equal(Object.hasOwn(r, 'departments'), false);
+  for (const e of r.reports) assert.ok(!('department' in e) && !('head' in e), JSON.stringify(e));
+});
+
+test('departments: position prompts name the department (staff) or the one it heads; colleagues carry theirs', () => {
+  const store = deptStore();
+  const tax = M.instructionsFor(TAX, { store });
+  assert.match(tax, /^You are Tax Specialist on Example Co's team, in the Legal department\. You report to General Counsel: /);
+  assert.ok(tax.includes('Marketing Manager (marketing, Marketing): '), tax);
+  assert.ok(tax.includes('QA Engineer (qa): Release checks.'), 'outside any department: no suffix');
+  const legal = M.instructionsFor(LEGAL, { store });
+  assert.match(legal, /^You are General Counsel on Example Co's team and head its Legal department\. You report to the CEO/);
+  const pay = M.instructionsFor(PAYROLL, { store });
+  assert.match(pay, /^You are Payroll on Example Co's team, in the Legal department\./, 'deeper staff are in it too');
+});
+
+test('departments: team_roster entries carry department (+ head: true); the CEO gets departments [{ name, head, headName, staff }]', async () => {
+  const store = deptStore();
+  const runtime = makeRuntime();
+  const r = await M.handlersFor(CEO, { store, runtime }).team_roster({});
+  const by = Object.fromEntries(r.reports.map((e) => [e.id, e]));
+  assert.equal(by.legal.department, 'Legal');
+  assert.equal(by.legal.head, true);
+  assert.equal(by.marketing.department, 'Marketing');
+  assert.ok(!('department' in by.qa) && !('head' in by.qa));
+  assert.deepEqual(r.departments, [
+    { name: 'Legal', head: 'legal', headName: 'General Counsel', staff: 8 },
+    { name: 'Marketing', head: 'marketing', headName: 'Marketing Manager', staff: 1 },
+  ]);
+  const m = await M.handlersFor(LEGAL, { store, runtime }).team_roster({});
+  assert.equal(Object.hasOwn(m, 'departments'), false, 'a manager keeps its shape');
+  const tax = m.reports.find((e) => e.id === 'tax');
+  assert.equal(tax.department, 'Legal');
+  assert.equal(Object.hasOwn(tax, 'head'), false);
+});
+
+test('departments: only the CEO\'s team_propose has the department param; its description carries DEPT_RULE', () => {
+  const specs = {};
+  const sdk = {
+    tool: (name, desc, shape, handler) => ({ name, desc, shape, handler }),
+    createSdkMcpServer: (o) => { for (const t of o.tools) specs[o.__ctx + ':' + t.name] = t; return { type: 'sdk', name: o.name, tools: o.tools }; },
+  };
+  for (const [label, ctx] of [['ceo', CEO], ['legal', LEGAL]]) {
+    const wrapped = { ...sdk, createSdkMcpServer: (o) => sdk.createSdkMcpServer({ ...o, __ctx: label }) };
+    M.createTeamServer(ctx, { sdk: wrapped, z, store: deptStore(), runtime: makeRuntime() });
+  }
+  const ceo = specs['ceo:team_propose'];
+  assert.ok(ceo.shape.department, 'the CEO can set department');
+  assert.match(ceo.shape.department.description, /only for a position that reports to the CEO: the department it heads, e\.g\. "Legal"; null closes it/);
+  assert.ok(ceo.shape.department.safeParse(null).success && ceo.shape.department.safeParse('Legal').success && ceo.shape.department.safeParse(undefined).success);
+  assert.ok(ceo.desc.includes(M.DEPT_RULE));
+  assert.match(M.DEPT_RULE, /a group, not a position/);
+  assert.match(M.DEPT_RULE, /re-parenting it under the other head/);
+  const pos = specs['legal:team_propose'];
+  assert.equal(pos.shape.department, undefined, 'a position cannot create, rename or close a department');
+  assert.ok(!pos.desc.includes(M.DEPT_RULE));
+});

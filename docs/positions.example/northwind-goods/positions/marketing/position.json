@@ -2,6 +2,7 @@
   "id": "marketing",
   "name": "Marketing Manager",
   "parent": null,
+  "department": "Marketing",
   "remit": "Release notes and launch posts for the shop and the app; drafts only, never posts.",
   "scope": {
     "kind": "company"

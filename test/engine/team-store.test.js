@@ -165,7 +165,9 @@ test('updatePosition: version +1, a copy per version (last 10 kept), conflicts, 
   throwsCode(() => s.updatePosition(CID, 'marketing', { id: 'mkt' }), 'invalid', /never changes/);
   throwsCode(() => s.updatePosition(CID, 'marketing', { status: 'retired' }), 'invalid', /retirePosition/);
   throwsCode(() => s.updatePosition(CID, 'marketing', { effort: 'enormous' }), 'invalid', /effort/);
-  throwsCode(() => s.updatePosition(CID, 'legal', { parent: 'payroll-tax' }), 'tree', /cycle/);
+  // legal heads the Legal department, so a re-parent also clears it (a head must report to the CEO)
+  throwsCode(() => s.updatePosition(CID, 'legal', { parent: 'payroll-tax' }), 'invalid', /only a position that reports to the CEO/);
+  throwsCode(() => s.updatePosition(CID, 'legal', { parent: 'payroll-tax', department: null }), 'tree', /cycle/);
   throwsCode(() => s.updatePosition(CID, 'nobody', { name: 'x' }), 'not-found');
   const moved = s.updatePosition(CID, 'payroll-tax', { parent: 'legal' });
   assert.equal(s.tree(CID).parentOf('payroll-tax'), 'legal');
@@ -210,7 +212,9 @@ test('hand edit that breaks the tree (cycle, dangling parent, depth) is reverted
   const s = open(root);
   s.listPositions(CID);
   const f = pfile(root, 'legal');
-  writeJ(f, { ...readJ(f), parent: 'payroll-tax' });
+  const { department, ...legal } = readJ(f); // a head must report to the CEO; drop it to reach the tree checks
+  assert.equal(department, 'Legal');
+  writeJ(f, { ...legal, parent: 'payroll-tax' });
   bump(f);
   assert.equal(s.getPosition(CID, 'legal').parent, null);
   const pr = s.problems(CID).find((p) => p.position === 'legal');

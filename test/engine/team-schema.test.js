@@ -93,3 +93,32 @@ test('fix 10: folders inside the home folder, next to it or elsewhere are fine; 
   const draft = S.validateCompany({ id: 'acme', name: 'Acme', folders: [home] }, { draft: true });
   assert.equal(draft.ok, false, 'drafts (proposals) are refused too');
 });
+
+// ---------- department (2.4): only a top-level position heads one; staff derive theirs (tree.departmentOf) ----------
+test('department: kept trimmed on a position that reports to the CEO', () => {
+  const r = S.validatePosition(base({ department: '  Legal & Compliance ' }));
+  assert.equal(r.ok, true, r.errors.join('; '));
+  assert.equal(r.value.department, 'Legal & Compliance');
+  const draft = S.validatePosition({ id: 'gc', name: 'General Counsel', remit: 'Contracts', department: 'Legal' }, { draft: true });
+  assert.equal(draft.ok, true, draft.errors.join('; '));
+  assert.equal(draft.value.department, 'Legal', 'a draft defaults parent to null, so it may head one');
+});
+test('department: null, "" and blank mean none and the key is dropped (byte-identical to a position without one)', () => {
+  const plain = S.validatePosition(base());
+  for (const v of [null, '', '   ', undefined]) {
+    const r = S.validatePosition(base({ department: v }));
+    assert.equal(r.ok, true, r.errors.join('; '));
+    assert.equal(Object.hasOwn(r.value, 'department'), false);
+    assert.equal(JSON.stringify(r.value), JSON.stringify(plain.value));
+  }
+});
+test('department: refused below the top level, on more than one line, too long, or not text', () => {
+  const staff = S.validatePosition(base({ parent: 'legal', department: 'Legal' }));
+  assert.equal(staff.ok, false);
+  assert.deepEqual(staff.errors, ['department: only a position that reports to the CEO (parent null) can head a department; its reports are in that department already']);
+  assert.equal(S.validatePosition(base({ parent: 'legal', department: null })).ok, true, 'null below the top level is fine');
+  assert.match(S.validatePosition(base({ department: 'Legal\nOps' })).errors.join(), /^department: one line, at most 60/);
+  assert.match(S.validatePosition(base({ department: 'x'.repeat(61) })).errors.join(), /^department: one line/);
+  assert.equal(S.validatePosition(base({ department: 'x'.repeat(60) })).ok, true);
+  assert.match(S.validatePosition(base({ department: 7 })).errors.join(), /^department:/);
+});

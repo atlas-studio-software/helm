@@ -10,7 +10,7 @@
 //   P.decide({ proposal, decision, note?, how, quote? }) -> { ok, created? } | { ok: false, error }
 //                                                       throws { code: 'not_found' | 'refused' | 'bad_params' }
 //   P.onUserMessage({ sessionId, text, origin, lastShownId }) -> null | { proposal, result }   6.3 typed approval
-//   P.import(json, { by? }) -> { imported: [{ id, ref, action, target }], skipped: [{ ref, reason }] }
+//   P.import(json, { by? }) -> { imported: [{ id, ref, action, target, title }], skipped: [{ ref, reason }] }
 //   P.pendingCount(company) -> n
 //   parseImport(json) -> { company, items, errors }      pure (the import tool's --dry-run)
 //
@@ -18,6 +18,9 @@
 // - Nothing here approves on its own. Only decide() (the owner's click through the RPC) and onUserMessage() (the owner's typed
 //   reply, origin 'user', through mcp.js typedApproval) apply a proposal. propose() and import() only ever add OPEN cards.
 // - Powers beyond the manager's are not a refusal: the card carries `excess` (tree.excess) so the owner sees what is cut.
+// - Cards carry `names` ({ positionId: display name } for every position id they mention, resolved live with the name
+//   stored at propose time as the fallback) and, when they touch departments, `deptChange` { kind: new | rename | close
+//   | move | join, name, from?, head, headName }. Department names are unique per company: checked on propose and approve.
 // - An approval re-validates against the CURRENT tree. A failure leaves the card open with `error` and returns ok:false.
 // - Cards live in the 'proposals' slice of team-state.json (open ones, and decided ones for 7 days). proposals.jsonl
 //   gets one line per proposal and one per decision; a proposal whose company does not exist yet (action 'company',
@@ -26,7 +29,7 @@
 
 const crypto = require('crypto');
 const S = require('./schema');
-const { createTree } = require('./tree');
+const { createTree, CEO } = require('./tree');
 const { typedApproval } = require('./mcp');
 const { ownerWords } = require('./owner');
 const { teamEvent } = require('./notice');
@@ -34,9 +37,9 @@ const { teamEvent } = require('./notice');
 const ACTIONS = ['create', 'edit', 'retire', 'company'];
 const KEEP_DECIDED_MS = 7 * 24 * 3600 * 1000;
 const OPEN_TICKET_STATES = new Set(['queued', 'delivered', 'asked']);
-const POSITION_FIELDS = ['id', 'name', 'parent', 'remit', 'scope', 'powers', 'duties', 'model', 'effort', 'repoRules'];
+const POSITION_FIELDS = ['id', 'name', 'parent', 'department', 'remit', 'scope', 'powers', 'duties', 'model', 'effort', 'repoRules'];
 // status (pause) is operational (team.pause), not a proposal
-const EDIT_FIELDS = ['name', 'parent', 'remit', 'scope', 'powers', 'duties', 'model', 'effort', 'repoRules'];
+const EDIT_FIELDS = ['name', 'parent', 'department', 'remit', 'scope', 'powers', 'duties', 'model', 'effort', 'repoRules'];
 const NOTEBOOK_HEADINGS = (S.NOTEBOOK_SECTIONS || ['Decisions', 'Facts', 'Open items', 'Log']);
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -120,7 +123,7 @@ function editDiff(cur, next, { briefBefore, briefAfter, excess }) {
   const du = setDiff(dk(cur.duties), dk(next.duties));
   if (du.added.length || du.removed.length) d.duties = { added: du.added.map((x) => x.slice(0, x.indexOf(':'))), removed: du.removed.map((x) => x.slice(0, x.indexOf(':'))) };
   if ((cur.parent == null ? null : cur.parent) !== (next.parent == null ? null : next.parent)) d.parent = { from: cur.parent == null ? null : cur.parent, to: next.parent == null ? null : next.parent };
-  for (const k of ['name', 'remit', 'model', 'effort', 'status']) if (JSON.stringify(cur[k]) !== JSON.stringify(next[k])) d[k] = { from: cur[k] == null ? null : cur[k], to: next[k] == null ? null : next[k] };
+  for (const k of ['name', 'department', 'remit', 'model', 'effort', 'status']) if (JSON.stringify(cur[k] == null ? null : cur[k]) !== JSON.stringify(next[k] == null ? null : next[k])) d[k] = { from: cur[k] == null ? null : cur[k], to: next[k] == null ? null : next[k] };
   if (JSON.stringify(cur.scope) !== JSON.stringify(next.scope)) d.scope = { from: cur.scope, to: next.scope };
   if (excess && excess.length) d.excess = excess;
   return d;
@@ -221,6 +224,7 @@ function createProposals(opts = {}) {
     if (!c) return null;
     const out = {};
     for (const k of Object.keys(c)) if (!k.startsWith('_')) out[k] = clone(c[k]);
+    out.names = namesFor(c); // {} on a company card
     return out;
   };
   const byId = (id) => cards.find((c) => c.id === id) || null;
@@ -242,6 +246,46 @@ function createProposals(opts = {}) {
     const pending = cards.find((c) => c.status === 'open' && c.action === 'create' && c.company === cid && c.target === pid);
     return pending ? pending.draft.name : pid;
   };
+  // the department a live or pending (open create) position is in: { name, head } | null
+  function deptOf(cid, pid, tr) {
+    if (pid == null) return null;
+    if (tr.has(pid)) return tr.departmentOf(pid);
+    const pc = openCreateFor(cid, pid);
+    if (!pc) return null;
+    if (pc.parent == null) return pc.draft.department ? { name: pc.draft.department, head: pid } : null;
+    return pc.deptChange && pc.deptChange.kind === 'join' ? { name: pc.deptChange.name, head: pc.deptChange.head } : null;
+  }
+  // every position id a card mentions, so the UI names them by their real names ("Legal has no Bash" named a
+  // position after its id before). An id that no longer resolves keeps the name stored when the card was made.
+  function cardIds(c) {
+    const ids = new Set();
+    const add = (x) => { if (typeof x === 'string' && x && x !== CEO) ids.add(x); };
+    if (c.action !== 'company') add(c.target);
+    add(c.parent);
+    if (c.by && c.by.kind === 'position') add(c.by.id);
+    const d = isObj(c.diff) ? c.diff : {};
+    if (isObj(d.parent)) { add(d.parent.from); add(d.parent.to); }
+    for (const e of [...(Array.isArray(c.excess) ? c.excess : []), ...(Array.isArray(d.excess) ? d.excess : [])]) {
+      if (!isObj(e)) continue;
+      add(e.by);
+      if (e.power === 'parent') add(e.value);
+    }
+    const dr = isObj(c.draft) ? c.draft : {};
+    if (Array.isArray(dr.moves)) for (const m of dr.moves) if (isObj(m)) { add(m.id); add(m.from); add(m.to); }
+    if (Array.isArray(dr.retires)) dr.retires.forEach(add);
+    if (isObj(c.deptChange)) add(c.deptChange.head);
+    return ids;
+  }
+  function namesFor(c) {
+    const out = {};
+    const kept = isObj(c.names) ? c.names : {};
+    for (const id of cardIds(c)) {
+      const n = c.company ? nameOf(c.company, id) : id;
+      if (n && n !== id) out[id] = n;
+      else if (typeof kept[id] === 'string') out[id] = kept[id];
+    }
+    return out;
+  }
   const openCreateFor = (cid, pid) => cards.find((c) => c.status === 'open' && c.action === 'create' && c.company === cid && c.target === pid) || null;
   const openCompanyFor = (cid) => cards.find((c) => c.status === 'open' && c.action === 'company' && c.target === cid) || null;
   function logLine(card, line) {
@@ -359,14 +403,22 @@ function createProposals(opts = {}) {
           errors.push(...terr);
         }
         if (v.ok) errors.push(...folderErrors(company, v.value));
+        if (v.ok && v.value.department) errors.push(...live.checkDepartment(v.value.department));
       }
       if (errors.length) return { errors };
+      let deptChange = null;
+      if (v.value.department) deptChange = { kind: 'new', name: v.value.department, head: id, headName: v.value.name };
+      else {
+        const dep = deptOf(cid, pos.parent, live);
+        if (dep) deptChange = { kind: 'join', name: dep.name, head: dep.head, headName: nameOf(cid, dep.head) };
+      }
       const draft = { ...v.value, brief: b.value };
       delete draft.version; delete draft.status;
       if (isObj(d.seed)) draft.seed = clone(d.seed);
       if (typeof d.notebook === 'string' && d.notebook.trim()) draft.notebook = d.notebook;
       const parentName = pos.parent == null ? null : nameOf(cid, pos.parent);
-      return { errors, fields: { company: cid, target: id, parent: pos.parent, draft, why, title: `New position: ${v.value.name}${parentName ? ` under ${parentName}` : ''}` } };
+      const title = deptChange && deptChange.kind === 'new' ? `New department: ${deptChange.name}, headed by ${v.value.name}` : `New position: ${v.value.name}${parentName ? ` under ${parentName}` : ''}`;
+      return { errors, fields: { company: cid, target: id, parent: pos.parent, draft, why, title, ...(deptChange ? { deptChange } : {}) } };
     }
 
     if (action === 'edit' && (d.id == null || d.id === '')) {
@@ -405,7 +457,10 @@ function createProposals(opts = {}) {
       }
       const draft = { id: target, name: cur.name, reports_on_retire: mode, retires: plan.retire, moves: plan.moves };
       const extra = plan.retire.length > 1 ? ` and ${plan.retire.length - 1} report(s)` : plan.moves.length ? ` (${plan.moves.length} report(s) move up to ${nameOf(cid, tr.parentOf(target))})` : '';
-      return { errors, fields: { company: cid, target, parent: cur.parent == null ? null : cur.parent, draft, why, title: `Retire ${cur.name}${extra}` } };
+      // retiring a head closes its department: move-up sends its reports to the CEO, outside any department
+      const dept = cur.parent == null && cur.department ? cur.department : null;
+      const deptChange = dept ? { kind: 'close', name: dept, head: target, headName: cur.name } : null;
+      return { errors, fields: { company: cid, target, parent: cur.parent == null ? null : cur.parent, draft, why, title: `Retire ${cur.name}${extra}${dept ? `; the ${dept} department closes` : ''}`, ...(deptChange ? { deptChange } : {}) } };
     }
 
     // edit of a position
@@ -424,12 +479,31 @@ function createProposals(opts = {}) {
     const newParent = changes.parent === undefined ? cur.parent : changes.parent;
     if (changes.parent !== undefined && (changes.parent == null ? null : changes.parent) !== (cur.parent == null ? null : cur.parent)) errors.push(...tr.checkReparent(target, changes.parent));
     if (v.ok) errors.push(...folderErrors(company, v.value));
+    const curDept = cur.department || null;
+    const nextDept = v.ok ? v.value.department || null : null;
+    if (nextDept && nextDept !== curDept) errors.push(...tr.checkDepartment(nextDept, { except: target }));
     if (errors.length) return { errors };
     const diff = editDiff(cur, v.value, { briefBefore, briefAfter: d.brief });
     if (!Object.keys(diff).length) return { errors: ['nothing to change: the edit matches the current position'] };
     const draft = { ...v.value, ...(d.brief !== undefined ? { brief: d.brief } : {}) };
     delete draft.version; delete draft.createdAt; delete draft.createdBy;
-    return { errors, fields: { company: cid, target, parent: newParent == null ? null : newParent, draft, why, title: `Change ${cur.name}`, diff, _changes: { ...changes, ...(d.brief !== undefined ? { brief: d.brief } : {}) }, _scope: v.value.scope } };
+    // departments: the head's own field changing (new / rename / close), else a re-parent that changes the derived one
+    let deptChange = null;
+    let title = `Change ${cur.name}`;
+    const headName = v.value.name;
+    if (curDept !== nextDept) {
+      if (!curDept) { deptChange = { kind: 'new', name: nextDept, head: target, headName }; title = `New department: ${nextDept}, headed by ${headName}`; }
+      else if (!nextDept) { deptChange = { kind: 'close', name: curDept, head: target, headName }; title = `Close department: ${curDept}`; }
+      else { deptChange = { kind: 'rename', from: curDept, name: nextDept, head: target, headName }; title = `Rename department: ${curDept} to ${nextDept}`; }
+    } else if (diff.parent) {
+      const before = tr.departmentOf(target);
+      const after = safe(() => tr.withParent(target, newParent).departmentOf(target), null);
+      if ((before ? before.head : null) !== (after ? after.head : null)) {
+        deptChange = { kind: 'move', from: before ? before.name : null, name: after ? after.name : null, head: after ? after.head : null, headName: after ? nameOf(cid, after.head) : null };
+        title = before && after ? `Move ${cur.name} from ${before.name} to ${after.name}` : after ? `Move ${cur.name} into ${after.name}` : `Move ${cur.name} out of ${before.name}`;
+      }
+    }
+    return { errors, fields: { company: cid, target, parent: newParent == null ? null : newParent, draft, why, title, ...(deptChange ? { deptChange } : {}), diff, _changes: { ...changes, ...(d.brief !== undefined ? { brief: d.brief } : {}) }, _scope: v.value.scope } };
   }
 
   // ----- propose -----
@@ -473,10 +547,12 @@ function createProposals(opts = {}) {
       ...(Array.isArray(excess) ? { excess } : {}),
       status: 'open', by, target: f.target, ...(f.parent !== undefined ? { parent: f.parent } : {}), at: iso(),
       ...(f._changes ? { _changes: f._changes } : {}),
+      ...(f.deptChange ? { deptChange: f.deptChange } : {}),
     };
     if (c.diff && Array.isArray(excess) && excess.length) c.diff.excess = excess;
     const warnName = action === 'create' ? nameWarning(f.draft.name) : action === 'edit' && f.target != null && f.diff && f.diff.name ? nameWarning(f.diff.name.to) : null;
     if (warnName) c.nameWarning = warnName;
+    if (c.company) c.names = namesFor(c);
     // 6.2: a new proposal for the same target from the same session supersedes the older one
     if (by.sessionId) {
       for (const o of cards) {
@@ -542,6 +618,10 @@ function createProposals(opts = {}) {
     }
     const fe = folderErrors(company, c.draft);
     if (fe.length) throw codeErr('invalid', fe.join('; '));
+    if (c.draft.department) {
+      const de = tr.checkDepartment(c.draft.department);
+      if (de.length) throw codeErr('invalid', de.join('; '));
+    }
     const pos = {};
     for (const k of POSITION_FIELDS) if (c.draft[k] !== undefined) pos[k] = clone(c.draft[k]);
     const excessNow = computeExcess(cid, pos.powers, pos.parent, { scope: pos.scope });
@@ -553,7 +633,8 @@ function createProposals(opts = {}) {
       try { store.writeNotebook(cid, value.id, nb); } catch (e) { logf('warn', `proposals: notebook of ${value.id}: ${e.message}`); c.warning = `the notebook could not be written (${e.message}); it starts from the template`; }
     }
     const parentName = value.parent == null ? null : nameOf(cid, value.parent);
-    return { created: { company: cid, id: value.id }, position: value, text: `${value.name} created${parentName ? ` under ${parentName}` : ' (reports to the CEO)'}`, inboxPosition: value.id };
+    const heads = value.department ? `, heading the ${value.department} department` : '';
+    return { created: { company: cid, id: value.id }, position: value, text: `${value.name} created${parentName ? ` under ${parentName}` : ' (reports to the CEO)'}${heads}`, inboxPosition: value.id };
   }
   function applyCompany(c, how) {
     const createdBy = { proposal: c.id, how, ...(c.by.kind === 'import' ? { by: c.by.name || 'import' } : {}) };
@@ -574,6 +655,10 @@ function createProposals(opts = {}) {
       const b = S.validateBrief(ch.brief);
       if (!b.ok) throw codeErr('invalid', b.errors.join('; '));
     }
+    if (typeof patch.department === 'string' && patch.department.trim()) {
+      const de = treeOf(cid).checkDepartment(patch.department, { except: c.target });
+      if (de.length) throw codeErr('invalid', de.join('; '));
+    }
     if (patch.powers) {
       const cur = positionOf(cid, c.target);
       const ex = computeExcess(cid, patch.powers, patch.parent !== undefined ? patch.parent : cur && cur.parent, { scope: patch.scope || (cur && cur.scope), workspaceId: c.target });
@@ -583,7 +668,16 @@ function createProposals(opts = {}) {
     if (!v) throw codeErr('not-found', `no live position "${c.target}"`);
     if (ch.brief !== undefined) store.writeBrief(cid, c.target, ch.brief);
     const moved = patch.parent !== undefined ? `, now under ${nameOf(cid, v.parent)}` : '';
-    return { text: `${v.name} updated${moved}`, inboxPosition: c.target };
+    return { text: `${v.name} updated${moved}${deptText(c.deptChange)}`, inboxPosition: c.target };
+  }
+  // the approval text's department tail (the notes to the proposer and CEO chats)
+  function deptText(dc) {
+    if (!isObj(dc)) return '';
+    if (dc.kind === 'new') return `; it heads the new ${dc.name} department`;
+    if (dc.kind === 'rename') return `; the ${dc.from} department is now ${dc.name}`;
+    if (dc.kind === 'close') return `; the ${dc.name} department closed`;
+    if (dc.kind === 'move') return dc.name ? `; now in ${dc.name}` : `; no longer in ${dc.from}`;
+    return '';
   }
   function applyRetire(c) {
     const cid = c.company;
@@ -593,7 +687,7 @@ function createProposals(opts = {}) {
     let tail = '';
     if (r.retired.length > 1) tail = ` with ${r.retired.length - 1} report(s)`;
     else if (r.moved.length) tail = ` (${r.moved.length} report(s) moved up to ${nameOf(cid, r.moved[0].to)})`;
-    return { text: `${name} retired${tail}`, inboxPosition: c.target, retire: r };
+    return { text: `${name} retired${tail}${deptText(c.deptChange)}`, inboxPosition: c.target, retire: r };
   }
 
   // after a company or a position appears, cards waiting on it can now show their excess
@@ -700,7 +794,7 @@ function createProposals(opts = {}) {
       if (r.refused) { skipped.push({ ref: it.ref, reason: r.reasons.join('; ') }); continue; }
       const c = byId(r.proposal);
       c.ref = it.ref;
-      imported.push({ id: c.id, ref: it.ref, action: it.action, target: c.target });
+      imported.push({ id: c.id, ref: it.ref, action: it.action, target: c.target, title: c.title });
     }
     save();
     if (parsed.company && companyOf(parsed.company)) safe(() => emit('team.updated', { company: parsed.company }), null);

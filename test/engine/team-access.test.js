@@ -135,6 +135,7 @@ test('once-grants expire with the card lifetime when unused', async () => {
 
 test('always: saved into position.json, ancestors whose own powers cut it are widened, effective powers include it', async () => {
   const R = rig();
+  R.store.updatePosition(CID, 'legal', { name: 'General Counsel' }); // a real job title, so names differs from the id
   const target = `${R.app}/contracts`;
   const v0 = { tax: R.store.getPosition(CID, 'tax').version, legal: R.store.getPosition(CID, 'legal').version };
   assert.ok(!R.store.effectivePowers(CID, 'tax').write.some((w) => S.isUnder(target, w)));
@@ -142,6 +143,7 @@ test('always: saved into position.json, ancestors whose own powers cut it are wi
   await R.tick();
   const o = R.cards[0].opts;
   assert.deepEqual(o.access.ancestors, ['legal'], 'Approve always also widens Legal');
+  assert.deepEqual(o.access.names, { legal: 'General Counsel' }, 'the card names each widened manager by its real name');
   assert.equal(o.access.onceOnly, undefined);
   R.cards[0].answer({ behavior: 'allow', scope: 'always' });
   const r = await p;

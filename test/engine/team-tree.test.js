@@ -304,3 +304,51 @@ test('schema: company folders, paths and caps', () => {
   assert.match(S.validateBrief('a\u0000b').errors.join(), /binary/);
   assert.match(S.validateChats([{ n: 2 }, { n: 1 }]).errors.join(), /above the previous/);
 });
+
+// ---------- departments (2.4) ----------
+test('departments: derived from the top-level ancestor; listed in report order with members breadth first', () => {
+  const list = [
+    pos('legal', null, { department: 'Legal' }),
+    pos('tax', 'legal'),
+    pos('contracts', 'legal'),
+    pos('payroll', 'tax'),
+    pos('marketing', null, { department: 'Marketing' }),
+    pos('social', 'marketing'),
+    pos('qa', null),
+  ];
+  const t = createTree(list);
+  assert.deepEqual(t.departmentOf('legal'), { name: 'Legal', head: 'legal' });
+  assert.deepEqual(t.departmentOf('payroll'), { name: 'Legal', head: 'legal' }, 'staff take the head\'s department');
+  assert.deepEqual(t.departmentOf('social'), { name: 'Marketing', head: 'marketing' });
+  assert.equal(t.departmentOf('qa'), null, 'a top-level position without one is outside any department');
+  assert.equal(t.departmentOf('ghost'), null);
+  assert.deepEqual(t.departments(), [
+    { name: 'Legal', head: 'legal', members: ['tax', 'contracts', 'payroll'] },
+    { name: 'Marketing', head: 'marketing', members: ['social'] },
+  ]);
+  // a re-parent moves the derived department with it (and its subtree)
+  const moved = t.withParent('tax', 'marketing');
+  assert.deepEqual(moved.departmentOf('payroll'), { name: 'Marketing', head: 'marketing' });
+  assert.deepEqual(createTree(sample()).departments(), [], 'no departments: an empty list');
+});
+test('departments: a broken line (missing parent, cycle) is in no department', () => {
+  const t = createTree([
+    pos('legal', null, { department: 'Legal' }),
+    pos('orphan', 'ghost'),
+    pos('a', 'b'), pos('b', 'a'),
+  ]);
+  assert.equal(t.departmentOf('orphan'), null);
+  assert.equal(t.departmentOf('a'), null);
+  assert.deepEqual(t.departments().map((d) => d.name), ['Legal']);
+});
+test('checkDepartment: a name is unique per company, case-insensitive with whitespace collapsed', () => {
+  const t = createTree([pos('legal', null, { department: 'Legal  Affairs' }), pos('fin', null, { department: 'Finance' })]);
+  assert.deepEqual(t.checkDepartment('Marketing'), []);
+  assert.match(t.checkDepartment(' legal affairs ').join(), /^department: "Legal {2}Affairs" already exists in this company \(headed by "legal"\)/);
+  assert.match(t.checkDepartment('FINANCE').join(), /headed by "fin"/);
+  assert.deepEqual(t.checkDepartment('legal affairs', { except: 'legal' }), [], 'renaming a head to its own name (another case) is fine');
+  assert.deepEqual(t.checkDepartment(''), []);
+  // hand-edited duplicates still load: both heads are listed
+  const dup = createTree([pos('a', null, { department: 'Ops' }), pos('b', null, { department: 'ops' })]);
+  assert.deepEqual(dup.departments().map((d) => d.head), ['a', 'b']);
+});

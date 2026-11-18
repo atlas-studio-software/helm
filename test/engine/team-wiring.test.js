@@ -40,7 +40,7 @@ function fixture(companyFolder) {
     proposals: [
       { ref: 'company', status: 'pending', team_propose: { action: 'company', id: 'northwind', name: 'Northwind Goods', folders: [companyFolder], why: 'test' } },
       { ref: 'ops', status: 'pending', team_propose: {
-        action: 'create', id: 'ops', parent: null, name: 'Operations Desk', remit: 'Answers questions about orders.', scope: { kind: 'company' },
+        action: 'create', id: 'ops', parent: null, department: 'Operations', name: 'Operations Desk', remit: 'Answers questions about orders.', scope: { kind: 'company' },
         brief: '# Operations Desk\n\nAnswers questions about orders.\n',
         powers: { read: ['$workspace'], write: ['$workspace'], tools: ['Read', 'Grep', 'Glob', 'Write', 'Edit'], bash: 'off', agents: false, worktree: false },
         duties: [], model: null, effort: 'low', seed: { notes: 'Orders ship on Mondays.', files: [] }, why: 'test' },
@@ -144,6 +144,7 @@ test('Positions on: import -> approve -> CEO roster -> ask answered by a positio
   assert.deepStrictEqual(list.companies.map((c) => [c.id, c.positions]), [['northwind', 1]]);
   const g = await engine.methods['team.get']({ company: 'northwind' });
   assert.deepStrictEqual(g.tree.map((r) => r.id), ['ops']);
+  assert.deepStrictEqual([g.tree[0].department, g.tree[0].departmentHead], ['Operations', 'ops'], 'team.get rows carry the derived department');
   assert.deepStrictEqual([g.limits.depthCap, g.limits.reportsPerManager, g.limits.positionsPerCompany, g.limits.expiryH], [5, 10, 30, 2]);
   const pv = await engine.methods['team.position']({ company: 'northwind', id: 'ops' });
   assert.ok(pv.position.effective && Array.isArray(pv.position.effective.read) && pv.position.limitedBy && typeof pv.position.limitedBy === 'object');

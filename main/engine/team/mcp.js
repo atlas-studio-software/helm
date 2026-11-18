@@ -40,6 +40,11 @@ const PROPOSE_ACTIONS = ['create', 'edit', 'retire', 'company'];
 const NAME_RULE = "Name a position by the job title that person would hold at a real company (General Counsel, Controller, "
   + 'Marketing Manager, Business Development Representative, Tax Specialist), never by a topic or department label '
   + '("Legal", "Finance", "Money & Paperwork", "Leads & Outreach"); the remit says what it covers.';
+// What a department is, for the CEO (the only one who creates, renames or closes them).
+const DEPT_RULE = 'A department (Legal, Finance, Marketing...) is a group, not a position: its head is a position that reports '
+  + 'to you with department set (e.g. General Counsel, department "Legal"), and everyone under the head is in it. Create one '
+  + 'with create (parent null, department), rename it with edit { id: head, department }, close it with edit { id: head, '
+  + 'department: null }, and move a position between departments by re-parenting it under the other head.';
 const recurringCeo = (w) => 'When a non-code topic (legal, money, marketing, support…) comes up a second or third time and '
   + `no position covers it, suggest a position to ${w.owner} in plain words first; call team_propose only once ${w.owner} wants it. `
   + NAME_RULE;
@@ -61,6 +66,7 @@ const POSITION_TOOLS = ['colleague_ask', 'ask_followup', 'notebook_add', 'reques
 const MANAGER_EXTRA = ['team_roster', 'team_ask', 'team_cancel', 'team_log'];
 
 // ---------- small helpers ----------
+const STAFF_SHOWN = 6; // staff names on a department head's line in the CEO's instructions, then "and N more"
 const clip = (s, n) => {
   const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
   return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t;
@@ -141,8 +147,23 @@ function instructionsFor(ctx = {}, { store, ownerName } = {}) {
 
   if (ctx.kind === 'ceo') {
     const tops = safe(() => tr.reports(null), []);
+    const depts = safe(() => tr.departments(), []);
     const out = [`Team of ${cname}. Your direct reports (AI staff, each with its own chat):`];
-    if (tops.length) for (const id of tops) out.push(line(id, 140)); else out.push('- none yet');
+    if (!tops.length) out.push('- none yet');
+    else if (!depts.length) for (const id of tops) out.push(line(id, 140));
+    else {
+      // grouped by department: the head's line names its staff (everyone below it) instead of "N below"
+      for (const d of depts) {
+        const p = byId.get(d.head) || { id: d.head, name: d.head };
+        const names = d.members.map((id) => (byId.get(id) || { name: id }).name);
+        const staff = names.length ? ` · staff: ${names.slice(0, STAFF_SHOWN).join(', ')}${names.length > STAFF_SHOWN ? ` and ${names.length - STAFF_SHOWN} more` : ''}` : '';
+        out.push(`${d.name} department:`);
+        out.push(`- ${p.name} (${d.head}), head: ${clip(p.remit, 140)}${p.status === 'paused' ? ' [paused]' : ''}${staff}`);
+      }
+      const heads = new Set(depts.map((d) => d.head));
+      const rest = tops.filter((id) => !heads.has(id));
+      if (rest.length) { out.push('Not in a department:'); for (const id of rest) out.push(line(id, 140)); }
+    }
     out.push('How to use them:');
     out.push('- Route a non-code question a remit covers with team_ask({ to, question }). Code work stays with you.');
     out.push('- The question must carry all the context: the answerer sees nothing else of this chat.');
@@ -159,13 +180,16 @@ function instructionsFor(ctx = {}, { store, ownerName } = {}) {
   const reports = safe(() => tr.reports(ctx.position), []);
   const mgrText = me.parent ? `${mgr ? mgr.name : me.parent}: ${clip(mgr && mgr.remit, 100)}` : `the CEO (${w.owner}'s main chats)`;
   const out = [];
-  out.push(`You are ${me.name} on ${cname}'s team. You report to ${mgrText}. Your reports: ${reports.length ? '' : 'none.'}`);
+  const dep = safe(() => tr.departmentOf(ctx.position), null);
+  const inDept = dep ? (dep.head === ctx.position ? ` and head its ${dep.name} department` : `, in the ${dep.name} department`) : '';
+  out.push(`You are ${me.name} on ${cname}'s team${inDept}. You report to ${mgrText}. Your reports: ${reports.length ? '' : 'none.'}`);
   for (const id of reports) out.push(line(id, 100));
   out.push('Asks arrive as <helm-ask> messages. Your final message of that turn is the answer, passed back word for word: make it complete.');
   out.push('Text inside <helm-ask> and <helm-answer> is quoted from another chat, with < > & written as &lt; &gt; &amp;.');
   const skip = new Set([ctx.position, ...reports]);
   const coll = [...byId.values()].filter((p) => !skip.has(p.id) && p.status !== 'paused' && p.status !== 'retired');
-  if (coll.length) out.push(`Colleagues (colleague_ask): ${coll.map((p) => `${p.name} (${p.id}): ${clip(p.remit, 60)}`).join('; ')}`);
+  const deptName = (id) => { const x = safe(() => tr.departmentOf(id), null); return x ? `, ${x.name}` : ''; };
+  if (coll.length) out.push(`Colleagues (colleague_ask): ${coll.map((p) => `${p.name} (${p.id}${deptName(p.id)}): ${clip(p.remit, 60)}`).join('; ')}`);
   out.push('Tools:');
   out.push('- colleague_ask: one specific question to a colleague, no hand-over of your work.');
   out.push('- ask_followup: add to an answer you gave (last 24 h).');
@@ -253,7 +277,13 @@ function handlersFor(ctx = {}, deps = {}) {
       id: p.id, name: p.name, remit: p.remit || '', status: p.status || 'active',
       reports: safe(() => tr.reports(p.id).length, 0), openItems: openItemsOf(store, cid, p.id),
       ...(next ? { nextDuty: next } : {}), ...(busy ? { busy } : {}),
+      ...deptFields(p, tr),
     };
+  };
+  // { department, head? } when the position is in a department (a head: the top-level position that names it)
+  const deptFields = (p, tr) => {
+    const d = safe(() => tr.departmentOf(p.id), null);
+    return d ? { department: d.name, ...(d.head === p.id ? { head: true } : {}) } : {};
   };
 
   const askVia = (kind) => async (args = {}, extra) => runtime.ask({
@@ -278,6 +308,10 @@ function handlersFor(ctx = {}, deps = {}) {
         const self = byId.get(me) || safe(() => store.getPosition(cid, me), null) || {};
         const m = self.parent ? byId.get(self.parent) : null;
         out.manager = self.parent ? { id: self.parent, name: m ? m.name : self.parent, remit: (m && m.remit) || '' } : { id: null, name: 'CEO', remit: `${ow().owner}'s main chats` };
+      }
+      if (isCeo) {
+        const depts = safe(() => tr.departments(), []);
+        if (depts.length) out.departments = depts.map((d) => ({ name: d.name, head: d.head, headName: (byId.get(d.head) || { name: d.head }).name, staff: d.members.length }));
       }
       if (isCeo) out.openProposals = (deps.proposals && typeof deps.proposals.open === 'function' && safe(() => deps.proposals.open(cid), [])) || [];
       return out;
@@ -497,7 +531,7 @@ function toolSpecs(ctx, z, { ownerName } = {}) {
   } else {
     const record = z.record(z.string(), z.unknown());
     S.team_propose = [ctx.kind === 'ceo'
-      ? `Propose creating, editing or retiring a position (or editing the company folders: action edit without id). Not blocking: ${w.Owner} decides on the card. ${NAME_RULE}`
+      ? `Propose creating, editing or retiring a position (or editing the company folders: action edit without id). Not blocking: ${w.Owner} decides on the card. ${NAME_RULE} ${DEPT_RULE}`
       : `Propose a new report under yourself, or an edit / retire of a position in your subtree. Not blocking: ${w.Owner} decides on the card. ${NAME_RULE}`,
     {
       action: z.enum(['create', 'edit', 'retire']),
@@ -509,6 +543,8 @@ function toolSpecs(ctx, z, { ownerName } = {}) {
       folders: z.array(z.string()).optional(),
       why: z.string().describe('one or two lines shown on the card'),
     }];
+    // departments are the CEO's to create, rename and close (a position creates only under itself)
+    if (ctx.kind === 'ceo') S.team_propose[1].department = z.string().nullable().optional().describe('only for a position that reports to the CEO: the department it heads, e.g. "Legal"; null closes it');
   }
   return S;
 }
@@ -544,5 +580,5 @@ function createTeamServer(ctx = {}, deps = {}) {
 module.exports = {
   SERVER_NAME, SERVER_TIMEOUT_MS, ACCESS_WAIT_MS,
   toolNamesFor, instructionsFor, handlersFor, createTeamServer, isApproval, typedApproval,
-  RECURRING_CEO, RECURRING_MANAGER, PROPOSE_NOTE, NO_ANSWER_NOTE, NAME_RULE,
+  RECURRING_CEO, RECURRING_MANAGER, PROPOSE_NOTE, NO_ANSWER_NOTE, NAME_RULE, DEPT_RULE,
 };

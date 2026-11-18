@@ -24,6 +24,7 @@ const LIMITS = Object.freeze({
   maxPositions: 30,       // live (active + paused) positions per company (6.4)
   idMax: 40,
   nameMax: 60,
+  departmentMax: 60,      // a department name (position.json `department`, heads only)
   remitMax: 300,          // one line in a manager's roster
   briefMax: 64_000,
   notebookMax: 200_000,   // the Log is trimmed to 200 lines, so a healthy notebook stays far below this
@@ -288,6 +289,15 @@ function validatePosition(obj, { draft = false } = {}) {
     const pe = checkId(v.parent, 'parent'); if (pe) errors.push(pe);
     else if (v.parent === v.id) errors.push('parent: a position cannot report to itself');
   }
+  // department: the group this position HEADS (docs/POSITIONS.md 2.4). Only a top-level position (parent null) heads
+  // one; its reports are in that department by derivation (tree.js departmentOf), so they never store it. Unset =
+  // none, and the key is dropped so positions without one stay byte-identical.
+  if (v.department === undefined || v.department === null || (isStr(v.department) && !v.department.trim())) delete v.department;
+  else if (!isStr(v.department) || /[\r\n]/.test(v.department) || v.department.trim().length > LIMITS.departmentMax) {
+    errors.push(`department: one line, at most ${LIMITS.departmentMax} characters (or null for none)`);
+  } else if (v.parent !== null && v.parent !== undefined) {
+    errors.push('department: only a position that reports to the CEO (parent null) can head a department; its reports are in that department already');
+  } else v.department = v.department.trim();
   if (v.scope === undefined) v.scope = { kind: 'company' };
   else if (!isObj(v.scope)) errors.push('scope: must be { "kind": "company" } or { "kind": "product", "folder": ... }');
   else if (v.scope.kind === 'company') v.scope = { kind: 'company' };

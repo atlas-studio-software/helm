@@ -421,3 +421,161 @@ test('notify: a position proposal fires one notice with a team object (what prop
   P.propose({ company: CID, by: ceo(), action: 'create', draft: createDraft({ id: 'billing', name: 'Billing Desk', parent: 'legal' }) });
   assert.equal(rec.notifies.length, 1, 'a CEO proposal is made in front of the owner: no push');
 });
+
+// ---------- departments (2.4): a name on a top-level position (its head); everyone below is in it ----------
+const card = (P, r) => { assert.equal(r.status, 'shown', JSON.stringify(r)); return P.get(r.proposal); };
+
+test('departments: create a head (new) and a report under one (join); a job title + department gets no nameWarning', () => {
+  const { P, store } = setup();
+  // the example's Legal department is closed first, so "General Counsel" + "Legal" can be proposed again
+  store.updatePosition(CID, 'legal', { department: null });
+  let c = card(P, P.propose({ company: CID, by: ceo(), action: 'create', draft: createDraft({ id: 'gc', name: 'General Counsel', department: ' Legal ' }) }));
+  assert.equal(c.title, 'New department: Legal, headed by General Counsel');
+  assert.deepEqual(c.deptChange, { kind: 'new', name: 'Legal', head: 'gc', headName: 'General Counsel' });
+  assert.equal(c.nameWarning, undefined, 'department names are never name-checked');
+  assert.equal(c.draft.department, 'Legal');
+  assert.deepEqual(c.names, { gc: 'General Counsel' }, 'a pending create is named by its draft name');
+  const res = P.decide({ proposal: c.id, decision: 'approve', how: 'click' });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(store.getPosition(CID, 'gc').department, 'Legal');
+  assert.match(P.get(c.id).result, /General Counsel created \(reports to the CEO\), heading the Legal department/);
+  // a create under the marketing head joins Marketing; the title keeps " under <manager name>"
+  c = card(P, P.propose({ company: CID, by: ceo(), action: 'create', draft: createDraft({ id: 'social', name: 'Social Media Coordinator', parent: 'marketing' }) }));
+  assert.equal(c.title, 'New position: Social Media Coordinator under Marketing Manager');
+  assert.deepEqual(c.deptChange, { kind: 'join', name: 'Marketing', head: 'marketing', headName: 'Marketing Manager' });
+  assert.deepEqual(c.names, { social: 'Social Media Coordinator', marketing: 'Marketing Manager' });
+  // deeper staff join their top-level head's department
+  store.updatePosition(CID, 'legal', { department: 'Legal & Compliance' });
+  c = card(P, P.propose({ company: CID, by: ceo(), action: 'create', draft: createDraft({ id: 'state-payroll', name: 'State Payroll Analyst', parent: 'payroll-tax' }) }));
+  assert.deepEqual(c.deptChange, { kind: 'join', name: 'Legal & Compliance', head: 'legal', headName: 'General Counsel' });
+  // a plain top-level create carries no deptChange
+  c = card(P, P.propose({ company: CID, by: ceo(), action: 'create', draft: createDraft({ id: 'ops', name: 'Operations Manager' }) }));
+  assert.equal(c.deptChange, undefined);
+  assert.equal(c.title, 'New position: Operations Manager');
+});
+
+test('departments: only the CEO makes them; a duplicate name is refused at propose time and again at approve time', () => {
+  const { P } = setup();
+  let r = P.propose({ company: CID, by: { kind: 'position', id: 'legal', sessionId: 's_legal' }, action: 'create', draft: createDraft({ department: 'Shipping' }) });
+  assert.ok(r.refused && r.reasons.some((x) => /^department: only a position that reports to the CEO/.test(x)), JSON.stringify(r));
+  r = P.propose({ company: CID, by: ceo(), action: 'create', draft: createDraft({ department: '  LEGAL ' }) });
+  assert.ok(r.refused && r.reasons.some((x) => /^department: "Legal" already exists in this company \(headed by "legal"\)/.test(x)), JSON.stringify(r));
+  r = P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'marketing', department: 'legal', why: 'x' } });
+  assert.ok(r.refused && /already exists/.test(r.reasons.join()), JSON.stringify(r));
+  // two open cards with the same new name: the first approval wins, the second stays open with the reason
+  const a = card(P, P.propose({ company: CID, by: ceo('s1'), action: 'create', draft: createDraft({ id: 'controller', name: 'Controller', department: 'Finance' }) }));
+  const b = card(P, P.propose({ company: CID, by: ceo('s2'), action: 'edit', draft: { id: 'app-qa', department: 'finance', why: 'QA owns the money checks.' } }));
+  assert.equal(P.decide({ proposal: a.id, decision: 'approve', how: 'click' }).ok, true);
+  const res = P.decide({ proposal: b.id, decision: 'approve', how: 'click' });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /department: "Finance" already exists/);
+  assert.equal(P.get(b.id).status, 'open');
+});
+
+test('departments: rename and close edit the head; diff.department; approve writes (and drops) the field', () => {
+  const { P, store, root } = setup();
+  let c = card(P, P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'legal', department: 'Legal & Compliance', why: 'Compliance joins Legal.' } }));
+  assert.equal(c.title, 'Rename department: Legal to Legal & Compliance');
+  assert.deepEqual(c.deptChange, { kind: 'rename', from: 'Legal', name: 'Legal & Compliance', head: 'legal', headName: 'General Counsel' });
+  assert.deepEqual(c.diff.department, { from: 'Legal', to: 'Legal & Compliance' });
+  assert.equal(c.nameWarning, undefined);
+  assert.equal(P.decide({ proposal: c.id, decision: 'approve', how: 'click' }).ok, true);
+  assert.equal(store.getPosition(CID, 'legal').department, 'Legal & Compliance');
+  assert.match(P.get(c.id).result, /the Legal department is now Legal & Compliance/);
+  c = card(P, P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'marketing', department: null, why: 'Marketing is one person.' } }));
+  assert.equal(c.title, 'Close department: Marketing');
+  assert.deepEqual(c.deptChange, { kind: 'close', name: 'Marketing', head: 'marketing', headName: 'Marketing Manager' });
+  assert.deepEqual(c.diff.department, { from: 'Marketing', to: null });
+  assert.equal(P.decide({ proposal: c.id, decision: 'approve', how: 'click' }).ok, true);
+  const file = JSON.parse(read(root, 'positions', 'marketing', 'position.json'));
+  assert.equal(Object.hasOwn(file, 'department'), false, 'closing drops the key');
+  // adding one to a top-level position is a "new" department
+  c = card(P, P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'app-qa', department: 'Quality', why: 'QA grows.' } }));
+  assert.equal(c.title, 'New department: Quality, headed by QA Engineer');
+  assert.deepEqual(c.deptChange, { kind: 'new', name: 'Quality', head: 'app-qa', headName: 'QA Engineer' });
+  // a plain edit has no deptChange and keeps its title
+  c = card(P, P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'legal', remit: 'Terms and privacy.', why: 'x' } }));
+  assert.equal(c.title, 'Change General Counsel');
+  assert.equal(c.deptChange, undefined);
+  assert.equal(c.diff.department, undefined);
+});
+
+test('departments: a re-parent that changes the derived department is a move; a head cannot be re-parented while it heads one', () => {
+  const { P, store } = setup();
+  let c = card(P, P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'tax', parent: 'marketing', why: 'Tax sits with Marketing now.' } }));
+  assert.equal(c.title, 'Move Tax Specialist from Legal to Marketing');
+  assert.deepEqual(c.deptChange, { kind: 'move', from: 'Legal', name: 'Marketing', head: 'marketing', headName: 'Marketing Manager' });
+  assert.deepEqual(c.names, { tax: 'Tax Specialist', marketing: 'Marketing Manager', legal: 'General Counsel' });
+  c = card(P, P.propose({ company: CID, by: ceo('s2'), action: 'edit', draft: { id: 'tax', parent: null, why: 'Tax reports to the CEO.' } }));
+  assert.equal(c.title, 'Move Tax Specialist out of Legal');
+  assert.deepEqual(c.deptChange, { kind: 'move', from: 'Legal', name: null, head: null, headName: null });
+  c = card(P, P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'app-qa', parent: 'legal', why: 'QA checks the legal text.' } }));
+  assert.equal(c.title, 'Move QA Engineer into Legal');
+  assert.deepEqual(c.deptChange, { kind: 'move', from: null, name: 'Legal', head: 'legal', headName: 'General Counsel' });
+  // within one department: no deptChange
+  c = card(P, P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'payroll-tax', parent: 'legal', why: 'Flatter.' } }));
+  assert.equal(c.deptChange, undefined);
+  assert.equal(c.title, 'Change Payroll Tax Specialist');
+  // a head re-parented with its department set is refused (no sub-departments)
+  const r = P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'legal', parent: 'marketing', why: 'x' } });
+  assert.ok(r.refused && /^department: only a position that reports to the CEO/.test(r.reasons.join()), JSON.stringify(r));
+  assert.equal(store.tree(CID).departmentOf('tax').name, 'Legal');
+});
+
+test('departments: retiring a head closes it (the title says so); its reports move up outside any department', () => {
+  const { P, store } = setup();
+  const c = card(P, P.propose({ company: CID, by: ceo(), action: 'retire', draft: { id: 'legal', why: 'Legal is outsourced.' } }));
+  assert.equal(c.title, 'Retire General Counsel (1 report(s) move up to the CEO); the Legal department closes');
+  assert.deepEqual(c.deptChange, { kind: 'close', name: 'Legal', head: 'legal', headName: 'General Counsel' });
+  assert.deepEqual(c.names, { legal: 'General Counsel', tax: 'Tax Specialist' });
+  assert.equal(P.decide({ proposal: c.id, decision: 'approve', how: 'click' }).ok, true);
+  assert.equal(store.tree(CID).departmentOf('tax'), null);
+  assert.deepEqual(store.tree(CID).departments().map((d) => d.name), ['Marketing']);
+  assert.match(P.get(c.id).result, /the Legal department closed$/);
+  assert.equal(P.get(c.id).names.legal, 'General Counsel', 'a retired position keeps its name on the card');
+  const t = card(P, P.propose({ company: CID, by: ceo(), action: 'retire', draft: { id: 'marketing', reports_on_retire: 'retire-too', why: 'x' } }));
+  assert.equal(t.title, 'Retire Marketing Manager; the Marketing department closes');
+});
+
+test('departments: names on cards cover by, excess managers, retires and moves (real names, not ids)', () => {
+  const { P } = setup();
+  const r = P.propose({ company: CID, by: { kind: 'position', id: 'payroll-tax', sessionId: 's_pt' }, action: 'create',
+    draft: createDraft({ id: 'state', name: 'State Payroll Analyst', powers: { ...POWERS, bash: 'on', tools: [...POWERS.tools, 'Bash'] } }) });
+  const c = card(P, r);
+  const bys = [...new Set(c.excess.map((e) => e.by))].filter((b) => b !== 'company');
+  assert.ok(bys.length > 0, JSON.stringify(c.excess));
+  for (const b of bys) assert.ok(c.names[b] && c.names[b] !== b, `names covers excess by ${b}: ${JSON.stringify(c.names)}`);
+  assert.equal(c.names['payroll-tax'], 'Payroll Tax Specialist');
+  assert.equal(c.names.state, 'State Payroll Analyst');
+  assert.deepEqual(c.deptChange, { kind: 'join', name: 'Legal', head: 'legal', headName: 'General Counsel' });
+  assert.equal(c.names.legal, 'General Counsel');
+  const rt = card(P, P.propose({ company: CID, by: ceo(), action: 'retire', draft: { id: 'tax', why: 'x' } }));
+  assert.deepEqual(rt.names, { tax: 'Tax Specialist', legal: 'General Counsel', 'payroll-tax': 'Payroll Tax Specialist' });
+  assert.ok(P.list({}).every((x) => x.names && typeof x.names === 'object'));
+});
+
+test('departments: an import file carries department (parseImport + P.import), with readable titles', () => {
+  const { P } = setup();
+  const file = { kind: 'helm-team-proposals', company: CID, proposals: [
+    { ref: 'fin', team_propose: { action: 'create', id: 'controller', name: 'Controller', department: 'Finance', remit: 'Books and cash.', brief: BRIEF, why: 'Money questions.' } },
+    { ref: 'ap', team_propose: { action: 'create', id: 'ap', name: 'Accounts Payable Specialist', parent: 'controller', remit: 'Bills.', brief: BRIEF, why: 'Bills pile up.' } },
+    { ref: 'ren', team_propose: { action: 'edit', id: 'marketing', department: 'Growth Marketing', why: 'Wider remit.' } },
+    { ref: 'close', team_propose: { action: 'edit', id: 'legal', department: null, why: 'One person.' } },
+    { ref: 'bad', team_propose: { action: 'create', id: 'x', name: 'Bookkeeper', parent: 'legal', department: 'Books', remit: 'r', brief: BRIEF, why: 'w' } },
+  ] };
+  const p = parseImport(JSON.stringify(file));
+  assert.equal(p.items.find((i) => i.ref === 'fin').draft.department, 'Finance');
+  assert.equal(p.items.find((i) => i.ref === 'ren').draft.department, 'Growth Marketing');
+  assert.equal(p.items.find((i) => i.ref === 'close').draft.department, null);
+  assert.match(p.errors.find((e) => e.ref === 'bad').reason, /department: only a position that reports to the CEO/);
+  const r = P.import(file);
+  const by = Object.fromEntries(r.imported.map((i) => [i.ref, i]));
+  assert.equal(by.fin.title, 'New department: Finance, headed by Controller');
+  assert.equal(by.ren.title, 'Rename department: Marketing to Growth Marketing');
+  assert.equal(by.close.title, 'Close department: Legal');
+  const ap = P.get(by.ap.id);
+  assert.deepEqual(ap.deptChange, { kind: 'join', name: 'Finance', head: 'controller', headName: 'Controller' }, 'a pending head names the department');
+  assert.equal(ap.names.controller, 'Controller');
+  assert.equal(P.decide({ proposal: by.fin.id, decision: 'approve', how: 'click' }).ok, true);
+  assert.equal(P.decide({ proposal: by.ap.id, decision: 'approve', how: 'click' }).ok, true);
+});

@@ -2,6 +2,7 @@
   "id": "legal",
   "name": "General Counsel",
   "parent": null,
+  "department": "Legal",
   "remit": "Terms, privacy and cookie text for the shop and the app; checks the text matches what the code does.",
   "scope": {
     "kind": "company"
