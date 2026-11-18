@@ -15,7 +15,8 @@
 // The asker side (`asker`): 'waiting' while a tool call waits in-call (team_ask / colleague_ask / team_ticket);
 // 'received' when it got the answer in-call; 'pending' when the call returned pending (the answer then arrives in
 // its chat as a <helm-answer> turn); 'stopped' when the owner pressed Stop (no turn: an answer card instead); 'lost' when
-// Helm restarted mid-call (a late-answer turn, like pending); 'none' for duty runs (duties.js gets the result).
+// Helm restarted mid-call (a late-answer turn, like pending, unless the asker asks the same question again while
+// it is open: sameQuestion re-joins it); 'none' for duty runs (duties.js gets the result).
 //
 // createRuntime({
 //   store,        T1 team store: getCompany(cid), listPositions(cid), getPosition(cid, pid),
@@ -656,6 +657,8 @@ function createRuntime(opts = {}) {
   async function ask(p = {}) {
     const again = sameCall(p);
     if (again) return resumeAsk(again, p);
+    const open = sameQuestion(p);
+    if (open) return rejoinAsk(open, p);
     const made = createTicket(p);
     if (made.refused) return made.refused;
     const t = made.ticket;
@@ -701,6 +704,42 @@ function createRuntime(opts = {}) {
     const left = (Number(t.waitUntil) || 0) - now();
     if (!(left > 0)) { afterWait(t, 'timeout'); return resultOf(t); }
     const why = await waitOn(t, left, p.signal);
+    if (why === 'settled') { if (t.asker !== 'none') t.asker = 'received'; dropOutbox(t.id, 'answer'); persist(); }
+    return resultOf(t);
+  }
+
+  // A restart that did not keep the asker's CLI (keeping off, or the CLI could not be kept) ended its team_ask /
+  // colleague_ask call: the ticket's asker is 'lost'. Continued afterwards, the asker may ask the same question again
+  // with a new tool call. The same asker (CEO chat or position), the same target and the same question while that
+  // ticket is still open is not a new question: the call re-joins the open ticket. Settled or gone: a new ticket.
+  const sameText = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  function sameQuestion(p) {
+    if (!p || !p.from) return null;
+    const from = p.from;
+    const kind = p.kind === 'colleague' ? 'colleague' : 'report';
+    const to = String(p.to || '').trim();
+    const q = sameText(p.question);
+    if (!to || !q) return null;
+    for (const t of tickets.values()) {
+      if (t.asker !== 'lost' || !isOpen(t) || t.company !== p.company || t.kind !== kind || t.to !== to || !t.from || t.from.kind !== from.kind) continue;
+      if (!(from.kind === 'position' ? t.from.id === from.id : t.from.sessionId && t.from.sessionId === from.sessionId)) continue;
+      if (sameText(t.question) === q) return t;
+    }
+    return null;
+  }
+
+  // The re-joined call waits with its own budget, as a new ask would; the answer comes back in it (no late answer).
+  async function rejoinAsk(t, p) {
+    log('info', `team runtime: ${t.id} was asked again by its asker after a restart ended the first call (${t.state}): re-joining it`);
+    if (p.toolUseId) t.toolUseId = p.toolUseId; // team.ask.updated now patches the new tool item
+    else delete t.toolUseId;
+    const budget = budgetMs(p, parentOf(t));
+    if (budget.short) { afterWait(t, 'timeout'); return resultOf(t, { short: true }); }
+    t.waitUntil = now() + budget.ms;
+    const wait = waitOn(t, budget.ms, p.signal);
+    persist();
+    emitTicket(t);
+    const why = await wait;
     if (why === 'settled') { if (t.asker !== 'none') t.asker = 'received'; dropOutbox(t.id, 'answer'); persist(); }
     return resultOf(t);
   }
@@ -1075,18 +1114,30 @@ function createRuntime(opts = {}) {
 
   // The delivered question (5.3) or duty run (9.5).
   function askText(t, again = false) {
-    // again: 'failed' after a failed answer turn, any other truthy value after a restart
-    if (t.kind === 'duty') return (again ? (again === 'failed' ? '(Delivered again: the last run failed before it finished.)\n' : '(Delivered again: Helm restarted before this run finished.)\n') : '') + (t.text || t.question);
+    // again: 'failed' after a failed answer turn; 'resume' after a restart cut off the turn answering it in this same
+    // chat (the question is already there: no second copy); any other truthy value after a restart
+    if (t.kind === 'duty') {
+      if (again === 'resume') return '(Helm restarted before this run finished. The run is above in this chat: carry on from where you left off, without starting over. A tool call rejected or interrupted as Helm closed was not refused: make it again.)';
+      return (again ? (again === 'failed' ? '(Delivered again: the last run failed before it finished.)\n' : '(Delivered again: Helm restarted before this run finished.)\n') : '') + (t.text || t.question);
+    }
     const dl = syncDeadline(t.id);
     const by = dl ? ` reply-by="${hhmm(dl)}"` : '';
+    const whom = t.from.kind === 'ceo' ? 'the CEO' : quote(t.from.name);
+    if (again === 'resume') {
+      return [
+        `<helm-ask ticket="${t.id}" from="${attr(t.from.name)}" kind="${t.kind}"${by} resume="restart">`,
+        '(Helm restarted before your answer to this question was recorded. The question is above in this chat: carry on from where you left off, without starting over. A tool call rejected or interrupted as Helm closed was not refused: make it again.)',
+        '</helm-ask>',
+        `Your final message is passed back to ${whom} word for word; it sees nothing else of this chat or your notebook.`,
+      ].join('\n');
+    }
     const handed = t.handed && t.handed.length ? `\nHanded to you (read-only for this question): ${t.handed.join(', ')}` : '';
-    const who = t.from.kind === 'ceo' ? 'the CEO' : quote(t.from.name);
     const lines = [
       ...(again ? [again === 'failed' ? '(Asked again: your last turn on this question failed before it answered.)' : '(Asked again: Helm restarted before your answer was recorded.)'] : []),
       `<helm-ask ticket="${t.id}" from="${attr(t.from.name)}" kind="${t.kind}"${by}>`,
       quote(`${t.question}${handed}`),
       '</helm-ask>',
-      `Answer this question in your reply. Your final message is passed back to ${who} word for word; it sees nothing`
+      `Answer this question in your reply. Your final message is passed back to ${whom} word for word; it sees nothing`
         + ' else of this chat or your notebook.'
         + (t.kind === 'colleague' ? ' It is a colleague\'s one narrow question: answer only it.' : ' If you need a report\'s input, use team_ask.')
         + ' Record anything durable with notebook_add.',
@@ -1094,9 +1145,10 @@ function createRuntime(opts = {}) {
     return lines.join('\n');
   }
 
-  function teamMeta(t) {
-    if (t.kind === 'duty') return { origin: 'duty', duty: { id: t.duty.id, title: t.duty.title, trigger: t.duty.trigger, ...(t.duty.due ? { due: t.duty.due } : {}) }, ticket: t.id };
-    return { origin: 'ask', ask: { ticket: t.id, from: { kind: t.from.kind, id: t.from.id || null, name: t.from.name }, kind: t.kind, handed: t.handed || [] } };
+  function teamMeta(t, resume = false) {
+    const r = resume ? { resume: true } : {};
+    if (t.kind === 'duty') return { origin: 'duty', duty: { id: t.duty.id, title: t.duty.title, trigger: t.duty.trigger, ...(t.duty.due ? { due: t.duty.due } : {}), ...r }, ticket: t.id };
+    return { origin: 'ask', ask: { ticket: t.id, from: { kind: t.from.kind, id: t.from.id || null, name: t.from.name }, kind: t.kind, handed: t.handed || [], ...r } };
   }
 
   function attachWaiter(es) {
@@ -1218,12 +1270,14 @@ function createRuntime(opts = {}) {
       // something started meanwhile, or the owner started typing there: next kick
       if (sessionBusy(es) || rolling.has(k)) return;
       if (!t.released && viewed(es) && now() - ownerActiveAt(es) < OWNER_QUIET_MS) return;
-      const again = t.redeliver || false;
+      let again = t.redeliver || false;
+      // a resume goes only into the chat that holds the question; another chat (it rolled over meanwhile) gets it in full
+      if (again === 'resume' && es.s.id !== t.resumeIn) again = true;
       const w = attachWaiter(es);
       const costBefore = Number(es.s && es.s.costUsd) || 0;
       let sent;
       try {
-        sent = await es.send({ text: askText(t, again), origin: 'helm', team: teamMeta(t) });
+        sent = await es.send({ text: askText(t, again), origin: 'helm', team: teamMeta(t, again === 'resume') });
       } catch (e) {
         w.detach();
         throw e;
@@ -1239,9 +1293,10 @@ function createRuntime(opts = {}) {
       t.deliveredAt = now();
       delete t.queueReason;
       delete t.redeliver;
-      t.delivery = { sessionId: es.s.id, itemId: sent ? sent.itemId : null, uuid: sent ? itemUuid(es, sent.itemId) : null, costBefore };
+      delete t.resumeIn;
+      t.delivery = { sessionId: es.s.id, itemId: sent ? sent.itemId : null, uuid: sent ? itemUuid(es, sent.itemId) : null, costBefore, ...(again === 'resume' ? { resume: true } : {}) };
       running.set(t.id, { sessionId: es.s.id });
-      logLine(t, 'delivered', { sessionId: es.s.id });
+      logLine(t, 'delivered', { sessionId: es.s.id, ...(again === 'resume' ? { resumed: true } : {}) });
       persist();
       emitTicket(t);
       w.p.then((info) => onAnswerTurnEnd(t.id, es, info)).catch(logged(`the answer turn end of ${t.id}`));
@@ -1271,10 +1326,15 @@ function createRuntime(opts = {}) {
     } else if (info.failed && !info.interrupted) {
       t.attempts = (t.attempts || 0) + 1;
       if (t.attempts < ATTEMPTS) {
+        // A resumed turn that failed (measured live: the new CLI exited at once while the old Helm's CLI was still
+        // closing) is resumed again: recovery found the question in that chat's transcript. A failed first
+        // delivery is asked again in full (the question may never have reached the transcript).
+        const resumeIn = t.delivery && t.delivery.resume ? t.delivery.sessionId : null;
         setState(t, 'queued');
-        t.redeliver = 'failed';
+        t.redeliver = resumeIn ? 'resume' : 'failed';
+        if (resumeIn) t.resumeIn = resumeIn;
         t.delivery = null;
-        t.queueReason = `${t.toName}'s turn failed; asking again`;
+        t.queueReason = `${t.toName}'s turn failed; ${resumeIn ? 'resuming it again' : 'asking again'}`;
         persist();
         emitTicket(t);
       } else settle(t, 'cancelled', { reason: `${t.toName}'s turn failed: ${info.error || 'unknown error'}`, ...(text ? { answer: text } : {}) });
@@ -1356,18 +1416,29 @@ function createRuntime(opts = {}) {
       }
       const items = Array.isArray(es.items) ? es.items : [];
       const asked = items.find((x) => x && ((t.delivery.uuid && x.uuid === t.delivery.uuid) || (!t.delivery.uuid && x.id === t.delivery.itemId)));
-      const text = asked ? finalText(items, asked.id, null) : '';
+      // The chat's restart note says the shutdown ended a turn there (Keep sessions running off, or not kept; a kept
+      // chat gets no note): that was the turn answering this. Its last words are no answer: a CLI told to close
+      // rejects its pending tool call ("STOP what you are doing") and may still reply to that before it exits.
+      const note = es.s && es.s.restartNote;
+      const cut = !!(note && note.working && Number(note.at) >= (Number(t.deliveredAt) || 0));
+      const text = asked && !cut ? finalText(items, asked.id, null) : '';
       if (text) settle(t, 'answered', { answer: text });
+      // The turn answering it ended with the old Helm's CLI. The chat's transcript holds the question (matched by
+      // uuid): that chat resumes its work, never a second copy of the question. Not in the transcript (or no uuid to
+      // tell): asked again in full.
+      else if (asked && t.delivery.uuid) requeue(t, 'Helm restarted before the answer was recorded', { resumeIn: es.s.id });
       else requeue(t, 'Helm restarted before the answer was recorded');
     }
   }
 
-  function requeue(t, why) {
+  function requeue(t, why, { resumeIn = null } = {}) {
     setState(t, 'queued');
-    t.redeliver = true;
+    t.redeliver = resumeIn ? 'resume' : true;
+    if (resumeIn) t.resumeIn = resumeIn;
+    else delete t.resumeIn;
     t.delivery = null;
     t.queueReason = why;
-    logLine(t, 'asked', { reason: `re-queued: ${why}` });
+    logLine(t, 'asked', { reason: `${resumeIn ? 're-queued to resume' : 're-queued'}: ${why}` });
     persist();
     emitTicket(t);
   }

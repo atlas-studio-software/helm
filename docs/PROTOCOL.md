@@ -1527,7 +1527,9 @@ team?: { company: "example-co", companyName: "Example Co" }         // a CEO ses
   - `origin?: "ask" | "duty" | "seed" | "answer"` (absent = typed by the user). All of these are sent with
     `origin: "helm"`, so they never count as the user's own words (prod-guard, typed approval).
   - `ask?: { ticket, from: { kind: "ceo" | "position", id: id | null, name }, kind: "report" | "colleague",
-    handed: [path] }` on an `origin: "ask"` item (the "Asked by …" bubble).
+    handed: [path], resume?: true }` on an `origin: "ask"` item (the "Asked by …" bubble). `resume`: not the question
+    but Helm's note to carry on with it after a restart cut off the turn answering it (the question is earlier in
+    the same chat; "Restarts" under Ticket states). A duty run's `duty` gets the same `resume?: true`.
   - `duty?: { id, title, trigger, due? }` on an `origin: "duty"` item. `trigger` is the
     run's trigger in words: `"schedule <cron>"`, `"commit <folder> <branch>"`, `"release <folder> <tag>"`,
     `"file <path>"` or `"manual"` (a "Run now").
@@ -1588,6 +1590,21 @@ the runtime finds the ticket by tool-use id and asker and resumes it instead of 
 (store, runtime with tickets loaded via `runtime.prime()`, proposals, access, duties; nothing runs). `team.start()`
 after the pass runs delivery, recovery, duties, the file watch and the recycle, which skips a CEO chat whose server
 was built on this layer. A duty run kept through the restart records its result when its turn ends.
+Without keep (the setting off, or a CLI that could not be kept), each question still reaches the answerer once:
+- Recovery: a `delivered` ticket whose answer turn ended with the old Helm (no turn running; no final text, or the
+  chat's `restartNote` has `working` from at or after the delivery, so its last words are a reply to the closing CLI's
+  tool rejection, not an answer) and whose
+  question is in that chat's transcript (by uuid) is re-queued to **resume**: crosstalk `asked` with reason
+  `re-queued to resume: …`, then `delivered` with `resumed: true`. The message is `<helm-ask ticket= from= kind=
+  reply-by= resume="restart">` with a one-line note instead of the question (`ask.resume: true`). Only when the
+  question is not in that chat (no uuid match, or the position has a new chat by then) is it re-delivered in full
+  ("Asked again: Helm restarted …", reason `re-queued: …`). A resumed turn that fails is resumed again (the usual
+  two attempts), not asked in full.
+- Re-ask: a `team_ask` / `colleague_ask` from the same asker (CEO chat by session id, position by id), to the same
+  target, with the same question (whitespace collapsed) while a ticket of that asker is open and its asker side is
+  `lost` (the restart ended that call) re-joins the ticket: no new ticket, the ticket's `toolUseId` becomes the new
+  call's, the call waits with its own `wait_s` and returns the answer in-call (no late-answer turn). Anything else is
+  a new ticket.
 
 ### RPC
 

@@ -767,7 +767,7 @@ test('9c. Restart after the answer turn ended while Helm was down: settled from 
   B.done();
 });
 
-test('9d. Restart after the answer turn was cut off: re-delivered with "Asked again"', async () => {
+test('9d. Restart after the answer turn was cut off before its chat recorded the question: re-delivered with "Asked again"', async () => {
   const clock = fakeClock(), sessions = fakeSessions(clock), state = memState(), store = fakeStore();
   const A = setup({ clock, sessions, state, store });
   const legal = await A.chat('legal');
@@ -779,6 +779,7 @@ test('9d. Restart after the answer turn was cut off: re-delivered with "Asked ag
   legal.turnActive = false; // the CLI died with Helm: no reply text
   legal.s.status = 'idle';
   legal.turnWaiters = [];
+  legal.items = legal.items.filter((x) => x.uuid !== A.rt.get(id).delivery.uuid); // its transcript never got the question
   const B = setup({ clock, sessions, state, store });
   await flush();
   assert.equal(B.asks(legal).length, 2);
@@ -889,6 +890,185 @@ test('9h. Kept CEO chat: the original deadline passed while Helm was away -> pen
   await B.endTurn(legal, 'Signed.');
   await B.at(110);
   assert.equal(B.answers(B.ceo).length, 1, 'the late answer as a turn');
+  B.done();
+});
+
+// Keep sessions running off (or a CLI that could not be kept): the restart ends the CEO's CLI inside its team_ask and
+// the position's CLI mid-answer. Before the fix the position got the question twice: recovery re-queued the ticket
+// and delivered a second full copy ("Asked again"), and a CEO continued after the restart that called team_ask again
+// (a new tool call id) opened a second ticket for the same question.
+test('9i. Restart without keep: the cut-off answer is resumed, never a second copy; the CEO asking the same open question again re-joins its ticket', async () => {
+  const clock = fakeClock(), sessions = fakeSessions(clock), state = memState(), store = fakeStore();
+  const A = setup({ clock, sessions, state, store });
+  const legal = await A.chat('legal');
+  const q = 'Is the NDA signed? Read the trail in your workspace first.';
+  A.track(A.askCeo('legal', q, { toolUseId: 'toolu_a1', waitS: 240 }));
+  await flush();
+  const id = A.last().id;
+  assert.equal(A.asks(legal).length, 1);
+  await A.at(30);
+  A.done();
+  // nothing was kept: both CLIs ended with the old Helm, the position before it answered
+  legal.turnActive = false;
+  legal.s.status = 'idle';
+  legal.turnWaiters = [];
+  A.ceo.turnActive = false;
+  const B = setup({ clock, sessions, state, store });
+  await flush();
+  const copies = () => legal.sent.filter((x) => x.text.includes(q)).length;
+  assert.equal(copies(), 1, 'the question reached the position once');
+  assert.equal(B.asks(legal).length, 2, 'the cut-off answer turn is resumed in its chat');
+  const resume = B.asks(legal)[1];
+  assert.equal(resume.origin, 'helm');
+  assert.deepEqual(resume.team, { origin: 'ask', ask: { ticket: id, from: { kind: 'ceo', id: null, name: 'CEO (Example Co)' }, kind: 'report', handed: [], resume: true } });
+  assert.match(resume.text, new RegExp(`^<helm-ask ticket="${id}" from="CEO \\(Example Co\\)" kind="report" resume="restart">\\n`));
+  assert.match(resume.text, /The question is above in this chat/);
+  assert.equal(B.rt.get(id).state, 'delivered');
+  assert.ok(B.lines(id).some((l) => l.state === 'asked' && l.reason === 're-queued to resume: Helm restarted before the answer was recorded'));
+  assert.ok(B.lines(id).some((l) => l.state === 'delivered' && l.resumed === true));
+
+  // the CEO is continued after the restart and calls team_ask again: a new tool call for the same open question
+  const n = B.rt._internals.tickets.size;
+  await B.at(45);
+  const call = B.track(B.askCeo('legal', `  ${q}\n`, { toolUseId: 'toolu_b1', waitS: 240 }));
+  await flush();
+  assert.equal(call.done, false, 'it waits in-call');
+  assert.equal(B.rt._internals.tickets.size, n, 'no second ticket');
+  assert.equal(B.rt.get(id).asker, 'waiting');
+  assert.equal(B.rt.get(id).toolUseId, 'toolu_b1', 'events patch the new tool item');
+  assert.equal(B.deadline(id), T0 + 285 * SEC, 'the new call waits its own wait_s');
+  assert.equal(copies(), 1, 'still asked once');
+  await B.at(60);
+  await B.endTurn(legal, 'Signed.');
+  assert.equal(call.done, true);
+  assert.equal(call.value.status, 'answered');
+  assert.equal(call.value.ticket, id);
+  assert.equal(call.value.answer, 'Signed.');
+  assert.equal(B.rt.get(id).asker, 'received');
+  await B.at(120);
+  assert.equal(B.answers(B.ceo).length, 0, 'answered in-call: no late-answer turn');
+  assert.equal(copies(), 1);
+  B.done();
+});
+
+test('9j. Restart without keep: a chat that rolled over meanwhile gets the question in full; a settled ticket, another question or another asker is asked as today', async () => {
+  const clock = fakeClock(), sessions = fakeSessions(clock), state = memState(), store = fakeStore();
+  const A = setup({ clock, sessions, state, store });
+  const legal = await A.chat('legal');
+  const q = 'Is the NDA signed?';
+  A.track(A.askCeo('legal', q, { toolUseId: 'toolu_a1' }));
+  await flush();
+  const id = A.last().id;
+  await A.at(30);
+  A.done();
+  legal.turnActive = false;
+  legal.s.status = 'idle';
+  legal.turnWaiters = [];
+  await sessions.endChat({ company: CID, position: 'legal', sessionId: legal.s.id }); // its next chat never saw the question
+  const B = setup({ clock, sessions, state, store });
+  await flush();
+  const legal2 = sessions.current(CID, 'legal');
+  assert.notEqual(legal2, legal);
+  assert.equal(B.asks(legal2).length, 1);
+  assert.ok(B.asks(legal2)[0].text.startsWith(`(Asked again: Helm restarted before your answer was recorded.)\n<helm-ask ticket="${id}"`), B.asks(legal2)[0].text);
+  assert.ok(B.asks(legal2)[0].text.includes(q));
+  assert.equal(B.asks(legal2)[0].team.ask.resume, undefined);
+  await B.at(40);
+  await B.endTurn(legal2, 'Signed.');
+  assert.equal(B.rt.get(id).state, 'answered');
+  // settled: asking the same question again is a new ticket, as today (the late answer still comes)
+  const n = B.rt._internals.tickets.size;
+  B.track(B.askCeo('legal', q, { toolUseId: 'toolu_b1' }));
+  await flush();
+  assert.equal(B.rt._internals.tickets.size, n + 1);
+  assert.notEqual(B.last().id, id);
+  assert.equal(B.asks(legal2).length, 2);
+  await B.endTurn(legal2, 'Still signed.');
+  await B.at(60);
+  assert.equal(B.answers(B.ceo).length, 1, 'the late answer of the first ticket');
+  B.done();
+
+  // an open lost ticket is re-joined only by its own asker, for the same target and the same question
+  const C = setup({ clock, sessions, state, store, noStart: true });
+  C.rt.prime();
+  const t = [...C.rt._internals.tickets.values()].find((x) => x.id === id);
+  Object.assign(t, { state: 'delivered', asker: 'lost', delivery: { sessionId: legal2.s.id, itemId: null, uuid: null } });
+  delete t.settledAt;
+  const m = C.rt._internals.tickets.size;
+  sessions.ceo('ceo-2');
+  C.track(C.rt.ask({ company: CID, from: { kind: 'ceo', sessionId: 'ceo-2' }, to: 'legal', kind: 'report', question: q }));
+  C.track(C.askCeo('legal', 'Is the NDA signed by both sides?'));
+  C.track(C.askCeo('finance', q));
+  await flush();
+  assert.equal(C.rt._internals.tickets.size, m + 3, 'another asker, another question, another target: new tickets');
+  assert.equal(C.rt.get(id).asker, 'lost');
+  C.done();
+});
+
+// Measured live (tools/team-keep-live.js --no-keep): a CLI told to close rejects its pending tool call ("STOP what you
+// are doing and wait") and the model may still reply to that before the CLI exits. The chat's restart note says the
+// shutdown cut that turn off, so its last words are not the answer.
+test('9l. Restart without keep: a reply the cut-off turn wrote as Helm closed is not the answer; the turn is resumed, and resumed again if that turn fails', async () => {
+  const clock = fakeClock(), sessions = fakeSessions(clock), state = memState(), store = fakeStore();
+  const A = setup({ clock, sessions, state, store });
+  const legal = await A.chat('legal');
+  const q = 'What is the ledger code? Follow the trail.';
+  A.track(A.askCeo('legal', q, { toolUseId: 'toolu_a1' }));
+  await flush();
+  const id = A.last().id;
+  await A.at(30);
+  A.done();
+  legal.items.push({ id: 'l-read', type: 'tool', name: 'Read', status: 'error' },
+    { id: 'l-stop', type: 'assistant', text: 'My read was rejected; I will stop and wait for instructions.' });
+  legal.reply(null);
+  legal.turnWaiters = [];
+  legal.s.restartNote = { at: clock.now(), cause: 'restart', working: true, waiting: false, agents: [], tasks: [], shells: 0, queued: 0 };
+  const B = setup({ clock, sessions, state, store });
+  await flush();
+  assert.equal(B.rt.get(id).state, 'delivered', 'not settled with the stop reply');
+  assert.equal(legal.sent.filter((x) => x.text.includes(q)).length, 1, 'the question reached the position once');
+  assert.equal(B.asks(legal).length, 2);
+  assert.equal(B.asks(legal)[1].team.ask.resume, true);
+  // the resumed turn fails at once (measured live: the new CLI exited while the old Helm's CLI was still closing):
+  // resumed again, still no second copy of the question
+  legal.reply(null, { failed: true, error: 'Claude Code process exited with code 1' });
+  await flush();
+  await B.at(40);
+  assert.equal(B.asks(legal).length, 3);
+  assert.equal(B.asks(legal)[2].team.ask.resume, true);
+  assert.equal(legal.sent.filter((x) => x.text.includes(q)).length, 1, 'still asked once');
+  assert.equal(B.rt.get(id).state, 'delivered');
+  await B.at(45);
+  await B.endTurn(legal, 'LEDGER-42');
+  assert.equal(B.rt.get(id).state, 'answered');
+  assert.equal(B.rt.get(id).answer, 'LEDGER-42');
+  await B.at(60);
+  assert.equal(B.answers(B.ceo).length, 1, 'one late answer, with the real answer');
+  assert.match(B.answers(B.ceo)[0].text, /LEDGER-42/);
+  B.done();
+});
+
+test('9k. Restart without keep mid duty run: the run is resumed in its chat (a note, not the duty text again); its result is recorded', async () => {
+  const clock = fakeClock(), sessions = fakeSessions(clock), state = memState(), store = fakeStore();
+  const A = setup({ clock, sessions, state, store });
+  const legal = await A.chat('legal');
+  const run = A.rt.runDuty({ company: CID, position: 'legal', duty: { id: 'weekly', title: 'Weekly check', trigger: { kind: 'schedule' } }, text: 'Run the weekly check.' });
+  await flush();
+  assert.equal(legal.sent.length, 1);
+  await A.at(30);
+  A.done();
+  legal.turnActive = false;
+  legal.s.status = 'idle';
+  legal.turnWaiters = [];
+  const B = setup({ clock, sessions, state, store });
+  const done = B.rt.resumeRun(run.ticket);
+  await flush();
+  assert.equal(legal.sent.length, 2);
+  assert.equal(legal.sent[1].text, '(Helm restarted before this run finished. The run is above in this chat: carry on from where you left off, without starting over. A tool call rejected or interrupted as Helm closed was not refused: make it again.)');
+  assert.equal(legal.sent[1].team.duty.resume, true);
+  assert.equal(legal.sent.filter((x) => x.text.includes('Run the weekly check.')).length, 1, 'the duty text went in once');
+  await B.endTurn(legal, 'Weekly check done.');
+  assert.deepEqual(await done, { state: 'done', finalText: 'Weekly check done.', reported: false, costUsd: 0 });
   B.done();
 });
 

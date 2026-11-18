@@ -204,7 +204,7 @@ not do, sources it trusts, how it reports. You may edit it in Team view or any e
 // crosstalk.jsonl (one line per state change; the UI folds by ticket)
 { at, ticket: "t_4f1e", parentTicket?: "t_77aa", chain: "t_77aa", from: { kind: "ceo"|"position"|"owen", id?, sessionId },
   to: "tax", kind: "report"|"colleague", state: "asked"|"delivered"|"answered"|"pending"|"late"|"refused"|"expired"|"cancelled",
-  question?, handed?: [paths], answer?, reason?, costUsd?, tookMs? }
+  question?, handed?: [paths], answer?, reason?, costUsd?, tookMs?, resumed?: true }
 // grants.jsonl
 { at, id: "g_..", position: "tax", request: { kind: "read"|"write"|"tool"|"bash"|"outward", target, why },
   decision: "once"|"always"|"denied"|"no-answer", savedTo?: ["tax", "legal"], note? }
@@ -518,6 +518,24 @@ else of this chat or your notebook. If you need a report's input, use team_ask. 
   (`waitUntil`); an answer that came while Helm was away is returned in that call and its late-answer turn dropped;
   a passed deadline returns `pending`. Without keep (or after a crash) the asker's call is lost with the old process,
   the restart note tells the model, and the answer comes as a late answer. Queued tickets are re-queued on start.
+- **Without keep, each question still reaches the answerer once.** Two rules (`runtime.js` `recover` and
+  `sameQuestion`):
+  - An answer turn the restart cut off is **resumed** in its chat when that chat's transcript holds the question
+    (matched by the delivered message's uuid): a short `<helm-ask … resume="restart">` note ("the question is above
+    in this chat: carry on from where you left off"; a tool call rejected or interrupted as Helm closed was not
+    refused, so make it again) goes in with the restart note, never a second copy of the question. It waits in the
+    queue like any delivery (5.3). Cut off means no turn running and no final text, or the chat's restart note says
+    the shutdown ended a turn there: a CLI told to close rejects its pending tool call with "STOP what you are doing"
+    and may still reply to that before it exits, and that reply is no answer (measured live). The question is asked
+    again in full only when that chat no longer holds it: not in its transcript, or the position has a new chat by
+    then. A resumed turn that fails (measured: the new CLI can exit at once while the old Helm's CLI is still
+    closing) is resumed again, within the usual two attempts; a failed first delivery is still asked again in full.
+  - An asker whose call the restart ended (asker `lost`) and that asks again (a new tool call: a continued CEO
+    usually repeats its `team_ask`) for the same target with the same question text (whitespace aside) while that
+    ticket is still open **re-joins** the ticket: no new ticket, the call waits with its own `wait_s` and returns the
+    answer in-call (no late-answer turn), and `team.ask.updated` patches the new tool item. The same asker means the
+    same CEO chat, or the same position. A settled or pruned ticket, another question, another target or another
+    asker is a new ticket, as before.
   The layer is prepared before the engine's re-attach pass (tickets loaded, nothing running) and started after it,
   so recovery sees which answer turns survived and no question is delivered beside a re-attaching CLI.
 - **Other calls in flight at a kept restart.** A duty run is kept; its result is recorded when the turn ends. An
