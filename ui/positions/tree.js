@@ -5,6 +5,10 @@
 // manager instead ("… › Tax ›"). Keyboard: the WAI-ARIA tree pattern (roving tabindex; arrows, Home/End, Enter).
 // Departments: when the company has one, the CEO's top level is grouped under a header per department (then "No
 // department"); the header is not a tree item, so the keyboard model is unchanged.
+// compact (the right sidebar's Team panel, ui/panels/team.js): the same rows, groups, open state and keys, one line a
+// row (chevron, status dot, name, Paused, the needs-you counts), a 12 px step, and with departments every group's rows
+// sit one step in from its header. onChat adds a chat button per row (and Shift+Enter); `current` replaces the
+// Team view's selection as the highlighted row.
 import { useEffect, useRef } from 'preact/hooks';
 import { html } from '../lib/html.js';
 import { Icon } from '../lib/icons.js';
@@ -77,6 +81,48 @@ function Row({ row, node, sel, tab, onSelect, enter }) {
   </div>`;
 }
 
+// ---- compact rows (the Team panel): one line each ----
+function CompactCeoRow({ row, company, sel, tab, onSelect, positions }) {
+  const co = company?.name || 'this company';
+  return html`<div role="none" class="pos-row" style=${{ '--indent': '0px' }}>
+    <div role="treeitem" class=${cx('pos-item pos-ceo', sel && 'sel')} data-id=${CEO} tabindex=${tab ? 0 : -1}
+      aria-level="1" aria-expanded=${row.hasKids ? 'true' : undefined} aria-selected=${sel ? 'true' : 'false'}
+      aria-label=${`CEO: your chats in ${co}. Opens a CEO chat. ${positions} position${positions === 1 ? '' : 's'} below.`}
+      title=${`Talk to the CEO: your chats in ${co}`} onClick=${() => onSelect(CEO)}>
+      <span class="pos-ceo-mark" aria-hidden="true"><${Icon} name="chat" size=${12} /></span>
+      <span class="pos-name">CEO</span>
+      <span class="pos-ceo-sub truncate">your chats</span>
+    </div>
+  </div>`;
+}
+
+function CompactRow({ row, node, sel, tab, onSelect, onChat, indent, enter }) {
+  const st = liveStatus(node);
+  const chips = pendingChips(node.pending);
+  const label = [node.name, statusText(st), node.problem ? 'Definition error' : '', chips.map((c) => c.label).join(', ')].filter(Boolean).join('. ');
+  const chat = (e) => { e.stopPropagation(); onChat(row.id); };
+  return html`<div role="none" class=${cx('pos-row', enter && 'enter')} style=${{ '--indent': `${indent}px` }}>
+    <div role="treeitem" class=${cx('pos-item', `st-${st}`, sel && 'sel', needsYou(node) > 0 && 'needs', onChat && 'has-chat')} data-id=${row.id}
+      tabindex=${tab ? 0 : -1} aria-level=${row.level} aria-setsize=${row.setsize} aria-posinset=${row.posinset}
+      aria-expanded=${row.hasKids ? String(row.open) : undefined} aria-selected=${sel ? 'true' : 'false'} aria-label=${label}
+      aria-keyshortcuts=${onChat ? 'Shift+Enter' : undefined}
+      title=${[`${node.name} · ${statusText(st)}`, node.remit, row.crumb ? `Reports to ${row.crumb}` : ''].filter(Boolean).join('\n')}
+      onClick=${() => onSelect(row.id)}>
+      ${row.hasKids ? html`<${Chev} row=${row} name=${node.name} />` : html`<span class="pos-chev-sp" aria-hidden="true"></span>`}
+      <span class=${cx('dot', dotClass(st), st === 'working' && 'live')} aria-hidden="true"></span>
+      ${row.crumb && html`<span class="pos-item-crumb" aria-hidden="true">${row.crumb} ›</span>`}
+      <span class="pos-name truncate">${node.name}</span>
+      ${st === 'paused' && html`<span class="pos-item-tag" aria-hidden="true">Paused</span>`}
+      ${(node.problem || chips.length > 0) && html`<span class="pos-item-ns" aria-hidden="true">
+        ${node.problem && html`<span class="pos-n danger" title="Definition error"><${Icon} name="alert" size=${11} /></span>`}
+        ${chips.map((c) => html`<span class="pos-n warn" key=${c.kind} title=${c.label}><${Icon} name=${c.kind === 'request' ? 'shield' : 'file-plus'} size=${11} /><span class="tnum">${c.n}</span></span>`)}
+      </span>`}
+      ${onChat && html`<button type="button" class="icon-btn sm pos-item-chat" tabindex="-1" aria-hidden="true" title=${`Open ${node.name}'s chat (Shift+Enter)`}
+        onClick=${chat}><${Icon} name="chat" size=${13} /></button>`}
+    </div>
+  </div>`;
+}
+
 // A department's header (spec 2.4): its name, its head and how many positions it holds (the head included). It is
 // not a tree item: arrows skip it, and the group around the department carries the same words for a screen reader.
 const deptLabel = (g) => (g.none ? `No department, ${g.count} position${g.count === 1 ? '' : 's'}`
@@ -93,16 +139,19 @@ function DeptHead({ g, indent }) {
   </div>`;
 }
 
-export function Tree({ cid, data, phone, onSelect = select, onTalk }) {
+export const COMPACT_STEP = 12;   // px a level in the compact tree (the sidebar is narrow at every width)
+
+export function Tree({ cid, data, phone, onSelect = select, onTalk, compact = false, onChat = null, current }) {
   const tree = data?.tree || [];
   const rows = visibleRows(tree, opens.value[cid], { phone });
   const byId = new Map(tree.map((r) => [r.id, r]));
-  const sel = selected.value[cid] || null;
+  const sel = (current === undefined ? selected.value[cid] : current) || null;
   const root = useRef(null);
-  const stop = focusOf.get(cid);
+  const fkey = compact ? `compact:${cid}` : cid;   // the Team view and the panel each keep their own tab stop
+  const stop = focusOf.get(fkey);
   const tabId = rows.some((r) => r.id === stop) ? stop : rows.some((r) => r.id === sel) ? sel : CEO;
   const focusRow = (id) => {
-    focusOf.set(cid, id);
+    focusOf.set(fkey, id);
     const el = root.current?.querySelector(`[role="treeitem"][data-id="${CSS.escape(id)}"]`);
     if (el) { el.focus(); el.scrollIntoView({ block: 'nearest' }); }
   };
@@ -110,36 +159,52 @@ export function Tree({ cid, data, phone, onSelect = select, onTalk }) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const item = e.target.closest?.('[role="treeitem"]');
     if (!item) return;
+    if (onChat && e.shiftKey && e.key === 'Enter') { e.preventDefault(); focusOf.set(fkey, item.dataset.id); onChat(item.dataset.id); return; }
     const r = treeKey(rows, item.dataset.id, e.key);
     if (!r.focus && !r.toggle && !r.select) return;
     e.preventDefault();
     if (r.toggle) { if (r.toggle.open) justOpened.add(r.toggle.id); setOpen(r.toggle.id, r.toggle.open); }
     if (r.focus) focusRow(r.focus);
-    if (r.select) { focusOf.set(cid, r.select); onSelect(r.select); }
+    if (r.select) { focusOf.set(fkey, r.select); onSelect(r.select); }
   };
   // a row clicked or selected elsewhere takes the tab stop
-  useEffect(() => { if (sel) focusOf.set(cid, sel); }, [cid, sel]);
+  useEffect(() => { if (sel) focusOf.set(fkey, sel); }, [fkey, sel]);
   const parentsOpened = new Set([...justOpened]);
-  const one = (r) => (r.ceo
-    ? html`<${CeoRow} key=${CEO} row=${r} company=${data?.company} sel=${sel === CEO} tab=${tabId === CEO} onSelect=${onSelect} positions=${tree.length} />`
-    : html`<${Row} key=${r.id} row=${r} node=${byId.get(r.id)} sel=${sel === r.id} tab=${tabId === r.id} onSelect=${onSelect} enter=${parentsOpened.has(r.parentId)} />`);
+  // compact: a 12 px step on every width, and with departments each group's rows one step in from its header
+  const base = phone ? INDENT.phone : INDENT.desktop;
+  const step = compact ? COMPACT_STEP : base;
+  const shift = compact && rows.some((r) => r.group) ? COMPACT_STEP : 0;
+  const indentOf = (r) => (compact ? Math.round(r.indent / base) * COMPACT_STEP : r.indent);
+  const one = (r) => {
+    if (compact) {
+      return r.ceo
+        ? html`<${CompactCeoRow} key=${CEO} row=${r} company=${data?.company} sel=${sel === CEO} tab=${tabId === CEO} onSelect=${onSelect} positions=${tree.length} />`
+        : html`<${CompactRow} key=${r.id} row=${r} node=${byId.get(r.id)} sel=${sel === r.id} tab=${tabId === r.id} onSelect=${onSelect} onChat=${onChat}
+            indent=${indentOf(r) + shift} enter=${parentsOpened.has(r.parentId)} />`;
+    }
+    return r.ceo
+      ? html`<${CeoRow} key=${CEO} row=${r} company=${data?.company} sel=${sel === CEO} tab=${tabId === CEO} onSelect=${onSelect} positions=${tree.length} />`
+      : html`<${Row} key=${r.id} row=${r} node=${byId.get(r.id)} sel=${sel === r.id} tab=${tabId === r.id} onSelect=${onSelect} enter=${parentsOpened.has(r.parentId)} />`;
+  };
   // with departments, each one (its header, its head and everyone under it) is a labelled group; none: rows as before
   const parts = [];
   let seg = null;
   for (const r of rows) {
-    if (r.group) { seg = { g: r.group, indent: r.indent, rows: [] }; parts.push(seg); }
+    if (r.group) { seg = { g: r.group, indent: indentOf(r), rows: [] }; parts.push(seg); }
     if (seg) seg.rows.push(r); else parts.push(r);
   }
-  return html`<div ref=${root} class=${cx('pos-tree', phone && 'is-phone')} role="tree" aria-label=${`${data?.company?.name || 'Company'} org tree`}
-      style=${{ '--step': `${phone ? INDENT.phone : INDENT.desktop}px` }} onKeyDown=${onKey}
-      onFocusIn=${(e) => { const it = e.target.closest?.('[role="treeitem"]'); if (it) focusOf.set(cid, it.dataset.id); }}>
+  return html`<div ref=${root} class=${cx('pos-tree', phone && 'is-phone', compact && 'is-compact')} role="tree" aria-label=${`${data?.company?.name || 'Company'} org tree`}
+      style=${{ '--step': `${step}px` }} onKeyDown=${onKey}
+      onFocusIn=${(e) => { const it = e.target.closest?.('[role="treeitem"]'); if (it) focusOf.set(fkey, it.dataset.id); }}>
     ${parts.map((x) => (x.g
       ? html`<div key=${x.g.key} role="group" class="pos-dept-group" aria-label=${deptLabel(x.g)} data-dept=${x.g.none ? '' : x.g.name}>
           <${DeptHead} g=${x.g} indent=${x.indent} />${x.rows.map(one)}</div>`
       : one(x)))}
-    ${!tree.length && html`<div class="pos-tree-empty" role="none">
+    ${!tree.length && (compact
+      ? html`<p class="pos-tree-empty is-compact" role="none"><strong>No positions yet.</strong> Open a CEO chat and say what you want covered; the CEO proposes a position for you to approve.</p>`
+      : html`<div class="pos-tree-empty" role="none">
       <p><strong>No positions yet.</strong> Open a CEO chat and say what you want covered, for example legal or money. The CEO proposes a position, and you approve it here or in that chat.</p>
       ${onTalk && html`<button type="button" class="btn btn-sm" onClick=${onTalk}><${Icon} name="chat" size=${14} />Talk to the CEO</button>`}
-    </div>`}
+    </div>`)}
   </div>`;
 }

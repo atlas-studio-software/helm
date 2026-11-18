@@ -5,7 +5,7 @@
 // All three persist to localStorage (best effort; private windows just start fresh).
 import { signal, effect } from '@preact/signals';
 
-const IDS = ['fleet', 'changes', 'files', 'preview', 'queue', 'usage', 'railway'];
+const IDS = ['fleet', 'changes', 'files', 'preview', 'queue', 'usage', 'railway', 'team'];   // team: lane team-panel
 
 function load(key, fallback) {
   try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); } catch { return fallback; }

@@ -94,6 +94,7 @@ const SCENARIOS = [
   S('panel-queue', PANEL('queue'), { pages: 2 }),
   S('panel-usage', PANEL('usage'), { pages: 3 }),
   S('panel-railway', PANEL('railway'), { pages: 2 }),
+  S('panel-team', PANEL('team'), { pages: 2 }),   // lane team-panel: the org tree (the mock transport's team.*)
   S('phone-list', `async () => { const s = await import('/shell/state.js'); s.view.value = 'session'; s.phoneScreen.value = 'list'; }`, { phone: true, pages: 3 }),
   S('settings', `async () => { (await import('/shell/state.js')).go('settings'); }`, { pages: 12 }),
   S('history', `async () => { (await import('/shell/state.js')).go('history'); }`, { pages: 3 }),

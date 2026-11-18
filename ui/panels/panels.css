@@ -23,9 +23,9 @@
   padding: var(--space-2);
   border-bottom: 1px solid var(--hairline);
 }
-/* Tab strip. Seven tabs fit the default 360px column: the open tab is a labelled pill, the rest are
-   icon-only with their count tucked onto the icon; below 352px every tab is an icon (fits down to the
-   280px minimum). If it still cannot fit (a future eighth tab) it scrolls sideways, no scrollbar:
+/* Tab strip. Eight tabs fit the default 360px column: the open tab is a labelled pill, the rest are
+   27px icon-only tabs with their count tucked onto the icon; below 352px every tab is an icon. Narrower
+   than ~290px (the column dragged towards its 280px minimum) it scrolls sideways, no scrollbar:
    index.js keeps the open tab in view and sets data-more so a soft fade shows which side has more. */
 .insp-tabs {
   display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0;
@@ -56,9 +56,9 @@
 .insp-head-actions { display: flex; gap: 2px; flex: none; }
 /* normal column: only the open tab keeps its label; counts move onto the icon's corner */
 @container insp (max-width: 700px) {
-  .insp-tabs { gap: 1px; }
+  .insp-tabs { gap: 0; }
   .insp-tab { gap: 5px; padding: 0 7px; }
-  .insp-tab:not(.on) { padding: 0 6px; min-width: 29px; }
+  .insp-tab:not(.on) { padding: 0 5px; min-width: 27px; }
   .insp-tab:not(.on) .insp-tab-label { display: none; }
   .insp-tab-ico { display: inline-grid; place-items: center; position: relative; }
   .insp-tab .insp-tab-badge {
@@ -69,7 +69,7 @@
 }
 @container insp (max-width: 352px) {
   .insp-tab .insp-tab-label { display: none; }
-  .insp-tab, .insp-tab:not(.on) { padding: 0 6px; min-width: 29px; }
+  .insp-tab, .insp-tab:not(.on) { padding: 0 5px; min-width: 27px; }
   .insp-tabs { gap: 0; }
   .insp .insp-head { padding-left: var(--space-1); padding-right: var(--space-1); }
 }
@@ -879,3 +879,18 @@
 .pn-us-console > svg { flex: none; }
 .pn-q-nogate { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; overflow-wrap: anywhere; }
 .pn-umeter-nolimits .pn-umeter-val { min-width: 0; color: var(--text-2); }
+
+/* ---------- team (lane team-panel): the company's org tree (team.js; the rows are positions.css .pos-item) ---------- */
+.pn-team-bar { gap: var(--space-2); }
+.pn-team-co { flex: 0 1 auto; min-width: 0; max-width: 60%; height: 30px; font-size: var(--fs-xs); }
+.pn-team-name { flex: 0 1 auto; min-width: 0; max-width: 60%; font-size: var(--fs-s); }
+.pn-team-counts { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-3); white-space: nowrap; }
+.pn-team-count { display: inline-flex; align-items: center; gap: 5px; }
+.pn-team-count.warn { color: var(--warn); }
+.pn-team-open { margin-right: -6px; }
+.pn-team-tree { padding: var(--space-2) var(--space-2) var(--space-5); }
+.pn-team-act { margin-top: var(--space-3); }
+@media (max-width: 820px), (pointer: coarse) {
+  .pn-team-co { height: 36px; }
+  .pn-team-open { width: 36px; height: 36px; }
+}

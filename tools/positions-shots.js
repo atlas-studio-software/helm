@@ -70,6 +70,11 @@ const SCENES = [
   { name: 'error', q: { mode: 'error' } },
   { name: 'light', q: { sel: 'legal', theme: 'light' } },
   { name: 'light-crosstalk', q: { sel: 'legal', tab: 'crosstalk', expand: 't_a1', theme: 'light' }, detail: true },
+  // the right sidebar's Team panel (ui/panels/team.js) in the whole app, beside General Counsel's chat (its row is the
+  // highlighted one); the phone: the panels sheet over that chat. `root` = what the audit measures.
+  { name: 'sidebar-panel', q: { panel: 'team' }, root: '.insp' },
+  { name: 'sidebar-panel-harbor', q: { panel: 'team', company: 'harbor-books', session: 's_storefront' }, root: '.insp' },   // no departments, nothing pending
+  { name: 'sidebar-panel-off', q: { panel: 'team', mode: 'off', session: 's_storefront' }, root: '.insp' },   // Positions off: how to switch it on
 ];
 
 const findings = [];
@@ -206,7 +211,8 @@ async function runScene(ctx, base, sc, width) {
       await page.evaluate(`(${install})()`);
       const cdp = await ctx.newCDPSession(page);
       await cdp.send('DOM.enable'); await cdp.send('CSS.enable');
-      const sc0 = (await page.evaluate((r) => window.__ovl.scrollers(r), ROOT))[0];
+      const root = sc.root || ROOT;
+      const sc0 = (await page.evaluate((r) => window.__ovl.scrollers(r), root))[0];
       const pages = sc0 ? Math.min(PAGES, Math.ceil(sc0.sh / Math.max(1, sc0.h * 0.85))) : 1;
       let top = sc0 ? await page.evaluate(([k]) => { const n = document.querySelector('[data-ovl-scroll="' + k + '"]'); return n ? n.scrollTop : 0; }, [sc0.key]) : 0;
       for (let i = 0; i < pages; i++) {
@@ -217,7 +223,7 @@ async function runScene(ctx, base, sc, width) {
           top = got;
           await page.waitForTimeout(120);
         }
-        found.push(...await auditOnce(page, cdp, ROOT, width, pages > 1 ? `${tag}@${i + 1}` : tag));
+        found.push(...await auditOnce(page, cdp, root, width, pages > 1 ? `${tag}@${i + 1}` : tag));
       }
       if (sc0) await page.evaluate(([k]) => window.__ovl.scrollTo(k, 0), [sc0.key]);
       await cdp.detach().catch(() => {});

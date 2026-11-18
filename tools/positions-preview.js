@@ -20,6 +20,10 @@
 //   scroll=<css>        scrolls that element into view (block: center) once the scene settled
 //   theme=light         the light look (ui/lib/mock-data.js reads it into the mock settings)
 //   freeze=1            no transitions / animations (screenshots measure the end state)
+//   panel=team          the right sidebar's Team panel (ui/panels/team.js) instead of the Team view: the whole app
+//                       (ui/shell/index.js Shell) on a session with the inspector open on Team; the phone shows it in
+//                       the panels sheet. session=<id> picks the session (default s_pos_legal, General Counsel's chat,
+//                       so its row is the highlighted one). Desktop also checks the inspector's tab strip fits.
 // The page sets window.__posReady = true once the data loaded and the asked-for clicks are done, or
 // 'error: <why>' when the scene could not be built (that is also logged with console.error).
 // Usage: node tools/positions-preview.js [port]   (default 4890; 0 = random), then open the printed URL.
@@ -63,6 +67,8 @@ async function pageMain() {
     const { UpdateChip } = await import('/shell/update.js');
     const mode = q.get('mode') || null;
     const cid = q.get('company') || 'example-co';
+    const panel = q.get('panel') === 'team';
+    const [shellIndex, panels] = panel ? await Promise.all([import('/shell/index.js'), import('/panels/index.js')]) : [];
 
     // the mock team backend, with a local emitter so its team.* events reach positions/state.js
     const subs = new Map();
@@ -81,7 +87,7 @@ async function pageMain() {
     T.sections.value = Object.fromEntries(list('sections').map((k) => [k, true]));
     const collapsed = Object.fromEntries(list('collapse').map((k) => [k, false]));
     if (Object.keys(collapsed).length) T.opens.value = { [cid]: collapsed };
-    shell.view.value = 'team';
+    shell.view.value = panel ? 'session' : 'team';
 
     // the real chrome around the view, as ui/shell/index.js Desktop() / Phone() lay it out for a non-session view
     const { cx } = util;
@@ -106,10 +112,49 @@ async function pageMain() {
       </div>
       <${Toasts} />`;
     }
-    render(html`<${App} />`, document.getElementById('app'));
+    render(panel ? html`<${shellIndex.Shell} />` : html`<${App} />`, document.getElementById('app'));
 
     await waitFor(() => store.ready.value && store.settings.value, 8000, 'app.hello (mock transport)');
-    if (mode === 'loading') {
+    if (panel) {
+      // the session first (the inspector shows beside a session; the phone's panels sheet over one), then the Team tab
+      const sid = q.get('session') || 's_pos_legal';
+      await waitFor(() => store.sessions.value.some((s) => s.id === sid), 8000, `mock session ${sid}`);
+      shell.openSession(sid);
+      panels.inspectorOpen.value = true;
+      panels.inspectorPanel.value = 'team';
+      if (shell.isPhone.value) shell.sheetOpen.value = true;
+    }
+    if (panel && mode === 'loading') {
+      await waitFor(() => document.querySelector('.pn-team .pn-loading'), 4000, 'the loading state (.pn-team .pn-loading)');
+      await sleep(300);
+    } else if (panel) {
+      await waitFor(() => {
+        const L = T.teamList.value;
+        if (!L && !T.listError.value) return false;
+        const el = document.querySelector('.insp .pn-team');
+        if (!el || el.querySelector('.pn-loading')) return false;
+        if (L && L.enabled && !L.rootProblem && (L.companies || []).length) {
+          const c = T.companies.value[T.companyId.value];
+          if (!c || (!c.data && !c.error)) return false;
+          if (c.data && !el.querySelector('[role="tree"]')) return false;
+        }
+        return true;
+      }, 8000, 'the Team panel (.insp .pn-team, no loading state)');
+      if (!shell.isPhone.value) {
+        // the default 360 px column holds every tab, whichever is open (the longest labels: Changes, Railway, Preview)
+        const strip = document.querySelector('.insp-tabs');
+        const over = [];
+        for (const id of ['changes', 'railway', 'team']) {
+          panels.inspectorPanel.value = id;
+          await frames();
+          const d = strip.scrollWidth - strip.clientWidth;
+          if (d > 0) over.push(`${id} open: ${d} px`);
+        }
+        panels.inspectorPanel.value = 'team';
+        await waitFor(() => document.querySelector('.insp .pn-team [role="tree"]') || !T.companies.value[T.companyId.value]?.data, 4000, 'the Team panel again');
+        if (over.length && document.querySelector('.insp-col')?.getBoundingClientRect().width >= 352) console.error(`positions-preview: the inspector tab strip overflows its ${Math.round(strip.clientWidth)} px (${over.join(', ')})`);
+      }
+    } else if (mode === 'loading') {
       await waitFor(() => document.querySelector('.pos-view .spinner'), 4000, 'the loading spinner');
       await sleep(300);
     } else {

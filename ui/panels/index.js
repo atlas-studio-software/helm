@@ -1,4 +1,4 @@
-// Owner: lane panels (E). Exports Inspector (right-hand panel: fleet, changes, files, preview, queue, usage)
+// Owner: lane panels (E). Exports Inspector (right-hand panel: fleet, changes, files, preview, queue, usage, railway, team)
 // and PANELS (tab registry the shell can render as rail buttons). Open/closed/wide state lives in ./state.js.
 import { useRef, useLayoutEffect } from 'preact/hooks';
 import { html, Icon, cx } from './util.js';
@@ -11,6 +11,8 @@ import { PreviewPanel } from './preview.js';
 import { QueuePanel } from './queue.js';
 import { UsagePanel, UsageMeter } from './usage.js';
 import { RailwayPanel } from './railway.js';
+import { TeamPanel } from './team.js';   // lane team-panel: Positions, the company's org tree
+import { teamList } from '../positions/state.js';
 
 export { UsageMeter };
 export { inspectorPanel, inspectorOpen, inspectorWide, showPanel, toggleInspector } from './state.js';
@@ -24,6 +26,7 @@ export const PANELS = [
   { id: 'queue', label: 'Queue', icon: 'queue', component: QueuePanel },
   { id: 'usage', label: 'Usage', icon: 'gauge', component: UsagePanel },
   { id: 'railway', label: 'Railway', icon: 'server', component: RailwayPanel },   // lane railway: deploy status + Redeploy/Restart
+  { id: 'team', label: 'Team', icon: 'users', component: TeamPanel },   // lane team-panel: the org tree; a row opens the Team view or its chat
 ];
 
 let previewVisited = false;
@@ -31,8 +34,14 @@ let previewVisited = false;
 function tabBadge(id) {
   if (id === 'fleet') { const n = activeFleet.value.filter((a) => a.status === 'running').length; return n || null; }
   if (id === 'queue') { const n = queue.value.filter((j) => j.status === 'queued' || j.status === 'running').length; return n || null; }
+  if (id === 'team') {   // what needs you across companies (team.list needsYou), as the rail's Team badge counts it
+    const l = teamList.value;
+    if (!l || !l.enabled || l.rootProblem) return null;
+    return (l.companies || []).reduce((n, c) => n + Math.max(0, Number(c && c.needsYou) || 0), 0) || null;
+  }
   return null;
 }
+const BADGE_KIND = { team: 'warn' };
 
 // The tab strip fits the column at the default width (panels.css). When the column is dragged narrower
 // than that it scrolls sideways instead of clipping: the open tab is kept in view, a soft fade marks the
@@ -86,7 +95,7 @@ export function Inspector({ panel: forced }) {
           const on = p.id === def.id, badge = tabBadge(p.id);
           return html`<button key=${p.id} role="tab" aria-selected=${on} class=${cx('insp-tab', on && 'on')}
               title=${p.label} onClick=${() => { inspectorPanel.value = p.id; inspectorOpen.value = true; }}>
-            <span class="insp-tab-ico"><${Icon} name=${p.icon} size=${15} />${badge != null && html`<span class="badge insp-tab-badge">${badge}</span>`}</span>
+            <span class="insp-tab-ico"><${Icon} name=${p.icon} size=${15} />${badge != null && html`<span class=${cx('badge insp-tab-badge', BADGE_KIND[p.id])}>${badge}</span>`}</span>
             <span class="insp-tab-label">${p.label}</span>
           </button>`;
         })}
