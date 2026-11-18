@@ -1031,6 +1031,12 @@ Reuse map (from the UI survey; no new visual language): Deck's view scaffolding 
     used in the last hour. Each row is a normal `SessionRow` with title "General Counsel" and sub-line "Northwind Goods ·
     answering CEO". It collapses like Past.
   - Every position is in the Team view.
+- **Inspector (right sidebar).** A **Team** tab (`ui/panels/team.js`) shows the current company's tree in the Team
+  view's compact mode (`positions/tree.js` `compact`): one line a row (status dot, name, Paused, request and
+  proposal counts), departments as headers with their rows a step in, the same open state, keys and data
+  (`positions/state.js`). A position row opens the Team view on it (`select` + `go('team')`), the CEO row a CEO chat
+  (`openCeo`), a row's chat button or Shift+Enter its chat (`openChat`). The active session's row is highlighted
+  (`Session.position`, or `Session.team` for the CEO row). Off or no company: a short state, no rows.
 - **Tabs.** A position chat is a normal tab (`openSession(id)`), titled with the position name and a small role
   chip with the company. A tab is never opened by itself when an ask arrives.
 - **Past and Elsewhere** leave out transcripts whose cwd is inside the team root (`history.js` and `external.js`

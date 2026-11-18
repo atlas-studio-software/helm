@@ -325,6 +325,13 @@ an org tree under the CEO. It is off until you turn it on.
   the last hour, each named after its position with the company on the line underneath. Its people icon opens the
   Team view, which lists every position. CEO chats stay in their project groups.
 - On the phone, use the Team icon in the Sessions header (shown while Positions is on) or the Home card.
+- Beside a session, the right sidebar's **Team** tab (on the phone: the panels sheet) shows the same tree, one line
+  a row: the **CEO** row on top, each department as a header ("Legal · headed by General Counsel") with its head and
+  staff under it, then positions in no department. Each row has a status dot (working, waiting on you, idle,
+  paused), the name and counts for what waits for you (access requests, proposals). Click a position (or Enter) to
+  open it in the Team view; click the CEO row for a CEO chat; a row's chat button (or **Shift+Enter**) opens that
+  position's chat. The row of the chat you are in is highlighted. The tab's badge counts what needs you; while
+  Positions is off it says where to switch it on (Settings > Team > Positions).
 - The header has the company switcher (when there is more than one), what needs you and what is working, **Talk to
   the CEO** (opens the company's most recently used CEO chat, or starts one in its first folder) and, on the
   desktop, a folder button that opens the company's team folder.
