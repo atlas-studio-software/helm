@@ -9,6 +9,10 @@
 //   sessions.handoffCancel { id }  stops a handoff in flight: interrupts its turn; sessions.handoff rejects with
 //                                  code 'cancelled'.
 //
+// Engine callers (Positions rollover, POSITIONS.md 8.3) use the returned handoff({ id, prompt, origin }) directly:
+// the same flow and error codes, with their own prompt (default HANDOFF_PROMPT). Over RPC a client cannot choose
+// the prompt: sessions.handoff ignores p.prompt.
+//
 // Failures reject with a code the UI shows: busy (a turn is running, or a handoff already is), interrupted (the
 // turn was stopped some other way), failed (the turn errored or the CLI died; message = why), empty (the reply
 // had no text).
@@ -52,8 +56,19 @@ function clip(text) {
 function createHandoff({ get, onSend = () => {}, log = () => {} }) {
   const inflight = new Map(); // session id -> { cancelled }
 
-  async function handoff(p = {}) {
-    const es = get(p.id);
+  // RPC: only the id is taken from the client; the prompt is always HANDOFF_PROMPT.
+  function rpcHandoff(p = {}) {
+    return run({ id: p && p.id });
+  }
+
+  // Engine callers: the same flow with a caller-chosen prompt (default HANDOFF_PROMPT) and origin (default 'helm').
+  function handoff({ id, prompt, origin } = {}) {
+    const text = typeof prompt === 'string' && prompt.trim() ? prompt : HANDOFF_PROMPT;
+    return run({ id, prompt: text, origin: typeof origin === 'string' && origin ? origin : 'helm' });
+  }
+
+  async function run({ id: wantId, prompt = HANDOFF_PROMPT, origin = 'helm' }) {
+    const es = get(wantId);
     const id = es.s.id;
     if (inflight.has(id)) throw codeErr('A handoff is already being written for this session', 'busy');
     await es.ensureLoaded();
@@ -71,7 +86,7 @@ function createHandoff({ get, onSend = () => {}, log = () => {} }) {
       let sent;
       try {
         // origin 'helm': Helm wrote this prompt, not the user (the guard lane's push guard only trusts the user's own).
-        sent = await es.send({ text: HANDOFF_PROMPT, origin: 'helm' });
+        sent = await es.send({ text: prompt, origin });
       } catch (e) {
         es.turnWaiters = (es.turnWaiters || []).filter((fn) => fn !== waiter);
         throw e;
@@ -119,9 +134,10 @@ function createHandoff({ get, onSend = () => {}, log = () => {} }) {
 
   return {
     methods: {
-      'sessions.handoff': handoff,
+      'sessions.handoff': rpcHandoff,
       'sessions.handoffCancel': cancel,
     },
+    handoff,
     inflight,
   };
 }

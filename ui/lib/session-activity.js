@@ -52,21 +52,37 @@ export function activeReason(s, { now = Date.now(), windowMs = ACTIVE_WINDOW_MS,
   return null;
 }
 
+// A position's chat (Positions, PROTOCOL "Positions": Session.position) as opposed to a CEO session
+// (Session.team), which is a normal session in its project group.
+export function isPositionSession(s) {
+  return !!(s && s.position && typeof s.position === 'object' && s.position.id);
+}
+
 // Splits Helm's sessions. Order is kept inside each list (the caller orders the active list itself).
+// team: live or recent position chats (isPositionSession), for the sidebar's Team section; the other
+// position chats are in none of the lists (the Team view lists them).
 // keep: Set/Map of ids that stay in the main list regardless (see the header).
 // empty: inactive sessions that never got a prompt through; neither list shows them (the sidebar
 // offers to delete them from Past). The open one goes to Past instead, so it is never invisible.
 export function splitSessions(list, { now = Date.now(), openId = null, keep = null, windowMs = ACTIVE_WINDOW_MS, isWorking = isWorkingDefault } = {}) {
-  const active = [], past = [], empty = [], archived = [];
+  const active = [], past = [], empty = [], archived = [], team = [];
   const o = { now, windowMs, isWorking };
   for (const s of list || []) {
     if (!s || !s.id) continue;
+    if (isPositionSession(s)) {
+      // A position's chat (Positions, spec 10.1) never joins a project group, Past, the empty pile or
+      // Archived: each position folder would otherwise become a group named "legal". Only a live or
+      // recent one (the same rule as the main list), or the open one (never invisible), is listed, in the
+      // sidebar's Team section; every chat, ended ones included, is in the Team view.
+      if (!s.archived && !s.position.ended && (activeReason(s, o) || (keep && keep.has(s.id)) || s.id === openId)) team.push(s);
+      continue;
+    }
     if (s.archived) archived.push(s);
     else if (activeReason(s, o) || (keep && keep.has(s.id))) active.push(s);
     else if (isEmptySession(s) && s.id !== openId) empty.push(s);
     else past.push(s);
   }
-  return { active, past, empty, archived };
+  return { active, past, empty, archived, team };
 }
 
 // Start order, newest first; ties by id so the order never depends on the input order.

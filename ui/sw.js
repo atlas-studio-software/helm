@@ -2,7 +2,9 @@
 // plain http has no service workers). Served without the key (main/server.js PUBLIC_PATHS): it holds no
 // data and caches nothing.
 //  1. push: show what Helm sent (main/push.js), unless a Helm page is visible right now (it has its own cue)
-//  2. notificationclick: focus an open Helm window on that session, else open one at /?session=<id>
+//  2. notificationclick: focus an open Helm window on that session, else open one at /?session=<id>. A team
+//     notice with no session (Positions: { view: 'team', company? }) opens the Team view instead, on that
+//     company: helm.select { view, company } to an open window, else /?view=team&company=<id>
 //  3. fetch: page loads go to the network; when the PC can't be reached, a small offline page instead of
 //     the browser's error. (A real fetch handler is also what lets Android Chrome install Helm as an app.)
 const page = (title, body) => `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -42,22 +44,27 @@ self.addEventListener('push', (event) => {
       tag: d.tag || 'helm',
       renotify: true,
       icon: '/assets/app-icon-192.png',
-      data: { sessionId: d.sessionId || null },
+      data: { sessionId: d.sessionId || null, view: d.view === 'team' ? 'team' : null, company: typeof d.company === 'string' && d.company ? d.company.slice(0, 200) : null },
     });
   })());
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const sid = event.notification.data && event.notification.data.sessionId;
+  const data = event.notification.data || {};
+  const sid = data.sessionId || null;
+  const team = !sid && data.view === 'team';   // a team notice: the Team view, on its company when it names one
+  const company = team && typeof data.company === 'string' && data.company ? data.company : null;
   event.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const w = wins.find((c) => c.visibilityState === 'visible') || wins[0];
     if (w) {
       try { await w.focus(); } catch {}
       if (sid) w.postMessage({ type: 'helm.select', sessionId: sid });
+      else if (team) w.postMessage({ type: 'helm.select', view: 'team', company });
       return;
     }
-    await self.clients.openWindow(sid ? `/?session=${encodeURIComponent(sid)}` : '/');
+    await self.clients.openWindow(sid ? `/?session=${encodeURIComponent(sid)}`
+      : team ? `/?view=team${company ? `&company=${encodeURIComponent(company)}` : ''}` : '/');
   })());
 });

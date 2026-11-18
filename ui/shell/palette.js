@@ -41,7 +41,7 @@ function buildCommands() {
   const out = [];
   const act = activeSession.value;
   for (const s of sessions.value) {
-    out.push({ id: `s:${s.id}`, group: 'Sessions', icon: s.archived ? 'archive' : 'message', label: s.title || 'New session', detail: s.archived ? `${s.project} · archived` : s.project,
+    out.push({ id: `s:${s.id}`, group: 'Sessions', icon: s.position ? 'users' : s.archived ? 'archive' : 'message', label: s.title || 'New session', detail: s.position ? `${s.position.companyName || s.position.company} · Team${s.position.ended ? ' · ended chat' : ''}` : s.archived ? `${s.project} · archived` : s.project,
       dot: s.status, meta: ago(s.updatedAt), run: () => openSession(s.id) });
   }
   out.push(
@@ -51,6 +51,7 @@ function buildCommands() {
       detail: presetDetail(p), run: () => openPreset(p.id) })),
     { id: 'home', group: 'Actions', icon: 'home', label: 'Go home', detail: 'Greeting, usage and your sessions over the clear wallpaper', keys: [mod, 'Shift', 'H'], run: goHome },   // lane home
     { id: 'deck', group: 'Actions', icon: 'deck', label: 'Open Deck', detail: 'Every session as a live tile', keys: [mod, 'Shift', 'D'], run: () => go('deck') },
+    { id: 'team', group: 'Actions', icon: 'users', label: 'Open Team', detail: 'Your AI staff for each company, under the CEO', keys: [mod, 'Shift', 'T'], run: () => go('team') },   // Positions (lane T10)
     { id: 'history', group: 'Actions', icon: 'history', label: 'Search history', keys: [mod, 'H'], run: () => go('history') },
     { id: 'settings', group: 'Actions', icon: 'settings', label: 'Open settings', keys: [mod, ','], run: () => go('settings') },
     { id: 'sidebar', group: 'Actions', icon: 'sidebar-left', label: 'Toggle sidebar', keys: [mod, 'B'], run: toggleSidebar },

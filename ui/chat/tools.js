@@ -11,6 +11,7 @@ import {
   fmtDuration, fmtElapsedShort, fmtAgentElapsed, modelName, finite, plural, splitLane, copyText,
 } from './util.js';
 import { ActBtn, toolCopy } from './actions.js';
+import { teamToolDescribe } from './team-cards.js';   // Positions: rows for the other mcp__team__* tools
 
 // Child items of Agent/Task tools, keyed by parentToolUseId. Each ChatView refreshes its own session's map every
 // render (kids.set); `map` is the merge of every rendered view's map, so two split panes (and a read-only external
@@ -74,6 +75,8 @@ function editStats(input) {
 
 // → { icon, verb, target, mono, meta, metaNode, chip }
 export function describe(item, cwd) {
+  const tt = teamToolDescribe(item);
+  if (tt) return tt;
   const { name, input = {}, status, result } = item;
   const running = status === 'running';
   const v = (done, ing) => (running ? ing : done);

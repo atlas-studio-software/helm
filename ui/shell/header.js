@@ -14,6 +14,7 @@ import { cx, useMenu, Menu, mod, fmtCost, modelLabel, effortLabel } from './util
 import { split, openSplit, splitPartner, closePane, focusPane } from './split.js';
 import { openFind } from './phone.js';
 import { etaInfo } from './eta.js';
+import { positionReportsTo } from './position-meta.js';
 import { minuteTick } from './activity.js';
 import { now as tickNow, useTicker } from '../chat/state.js';
 import { displayStatus, isAgentsOnly, agentsLabel } from '../lib/session-status.js';
@@ -226,6 +227,9 @@ function SessionLine({ s, hm, compact = false }) {
   const dirty = repo?.dirty ? `${repo.dirty} changed` : '';
   const gitParts = repo ? [repo.detached ? `detached at ${repo.branch}` : repo.branch, dirty || 'clean', ab || up || (repo.upstream ? `up to date with ${repo.upstream}` : '')].filter(Boolean) : [];
   const clock = hm.clock;
+  // Positions: null for any other session. Only a position's header reads the sessions list, so an ordinary header
+  // doesn't re-render on every other session's update.
+  const reportsTo = s.position ? positionReportsTo(s, sessions.value) : null;
   const status = `${hm.text}${clock ? ` · ${clock.text}` : ''}`;
   const agents = hm.agentList;
   const agentsTip = agents.length ? agents.slice(0, MAX_AGENTS_LISTED).map((a) => agentLine(a, now)).join('\n') + (agents.length > MAX_AGENTS_LISTED ? `\n+${agents.length - MAX_AGENTS_LISTED} more` : '') : '';
@@ -263,6 +267,7 @@ function SessionLine({ s, hm, compact = false }) {
       ${hm.todo && html`<span class="sh-i sh-g sh-todo tnum" data-p="5" title=${todoTip}><${Icon} name="checklist" size=${12} /><span class="sh-t">${hm.todo.text}</span></span>`}
       ${hm.tasks && html`<span class="sh-i sh-g sh-tasks tnum" data-p="7" title=${tasksTip}><${Icon} name="terminal" size=${12} /><span class="sh-t">${hm.tasks.text}</span></span>`}
       ${hm.context && html`<span class="sh-i sh-g sh-ctx tnum" data-p=${compact ? '1.5' : '8'} title=${ctxTip}><${Icon} name="gauge" size=${12} /><span class="sh-t">${hm.context.text}</span></span>`}
+      ${reportsTo && html`<span class="sh-i sh-g sh-reports" data-p="6.5" title=${`${s.position.name || 'This position'} reports to ${reportsTo}`}><${Icon} name="users" size=${12} /><span class="sh-t">reports to ${reportsTo}</span></span>`}
       ${s.cwd && html`<span class="sh-i sh-g sh-folder" data-p="6"><${Icon} name="folder" size=${12} /><span class="sh-t">${folderName(s)}</span></span>`}
       ${repo && html`<span class="sh-i sh-g sh-git" data-git data-p="9"><${Icon} name="git-branch" size=${12} /><span class="sh-t sh-git-branch mono">${repo.branch || '(no branch)'}</span></span>`}
       ${repo && (dirty || ab || up) && html`<span class="sh-i sh-sp sh-git-x tnum" data-p="11">${dirty && html`<span class="sh-git-dirty">${dirty}</span>`}${ab && html`<span class="sh-git-ab">${ab}</span>`}${!ab && up && html`<span class="sh-git-up">${up}</span>`}</span>`}

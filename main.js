@@ -135,7 +135,7 @@ if (restartedFrom) log(`restarted (${restartedFrom.auto ? 'update' : `by ${resta
 const { startServer } = require('./main/server');
 const { createRouter } = require('./main/rpc');
 const { createFiles } = require('./main/files');
-const { createSettings } = require('./main/settings');
+const { createSettings, teamRootProblem } = require('./main/settings');
 const { createAccount } = require('./main/account');
 const { createLook } = require('./main/look');
 const { createTopRow, hwndOf } = require('./main/toprow');   // top-row hints to Mantle's top bar
@@ -196,8 +196,19 @@ function hostEmit(event, data) {
   try { notifier && notifier.onEngineEvent(event, data); } catch (e) { log('notifier hook', e); }
   try { badge && badge.onEngineEvent(event, data); } catch (e) { log('badge hook', e); }
   if (event === 'notify' && push) pushNotify(data);
-  if (event === 'settings.updated') { applySettings(data); if (updater) updater.refresh(); }
+  if (event === 'settings.updated') { applySettings(data); if (updater) updater.refresh(); teamSettingsChanged(data); }
 }
+
+// Positions (docs/POSITIONS.md): the engine starts / stops the team when Settings > Team changes, and duties look
+// again after the window regains focus or the computer wakes (missed schedules, 9.3).
+let lastTeamKey = null;
+function teamSettingsChanged(s) {
+  const key = JSON.stringify((s && s.team) || null);
+  if (key === lastTeamKey) return;
+  lastTeamKey = key;
+  try { if (engine && engine.team) engine.team.refresh(); } catch (e) { log('team refresh', e); }
+}
+function teamPoke(reason) { try { if (engine && engine.team) engine.team.poke(reason); } catch (e) { log('team poke', e); } }
 
 // The same notices notify.js toasts on the desktop, to the phone (policy: main/push.js pushDecision).
 function windowFocused() { return !!(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized() && win.isFocused()); }
@@ -404,7 +415,7 @@ function createWindow() {
   win.on('move', remember);
   win.on('maximize', remember);
   win.on('unmaximize', remember);
-  win.on('focus', () => { win.flashFrame(false); if (look) look.refresh(); });  // fs.watch can drop events
+  win.on('focus', () => { win.flashFrame(false); if (look) look.refresh(); teamPoke('focus'); });  // fs.watch can drop events
   // Look Sync lining up: the window's content area + its monitor, sent on every move/resize (the UI
   // moves its pre-blurred wallpaper layer per animation frame; it never re-blurs for a move)
   for (const ev of ['move', 'resize', 'maximize', 'unmaximize', 'restore', 'enter-full-screen', 'leave-full-screen']) win.on(ev, sendPlacement);
@@ -808,6 +819,8 @@ app.whenReady().then(async () => {
 
   settings = createSettings({
     userDataDir, uiBgDir: path.join(UI_DIR, 'assets', 'backgrounds'), emit: hostEmit, log,
+    // Positions: the company folders on the team, for the team.root check (the engine knows them once it runs)
+    teamCompanyFolders: () => (engine && engine.team ? engine.team.companyFolders() : []),
     onLocalChange: (before, after) => { if (look) look.onLocalChange(before, after); },
     // the API key is OS-encrypted at rest when Electron can (main/settings.js createKeyStore)
     secretBox: { available: () => electron.safeStorage.isEncryptionAvailable(), encrypt: (t) => electron.safeStorage.encryptString(t), decrypt: (b) => electron.safeStorage.decryptString(b) },
@@ -828,7 +841,7 @@ app.whenReady().then(async () => {
     // a --test run never starts Mantle: it only logs what it would have run
     ...(TEST ? { launch: (exe, args) => log('[look] test: would open Mantle', exe, JSON.stringify(args)) } : {}),
   }).start();
-  try { electron.powerMonitor.on('resume', () => look && look.refresh()); } catch (e) { log('powerMonitor', e); }
+  try { electron.powerMonitor.on('resume', () => { if (look) look.refresh(); teamPoke('resume'); }); } catch (e) { log('powerMonitor', e); }
   // Top-row hints to Mantle. A --test run never talks to the user's real Mantle: only to HELM_TOPROW_PIPE (a fake server).
   toprow = createTopRow({
     pipe: TEST ? (process.env.HELM_TOPROW_PIPE || null) : (process.env.HELM_TOPROW_PIPE || undefined),
@@ -844,6 +857,9 @@ app.whenReady().then(async () => {
   try {
     engine = await mod.createEngine({ userDataDir, emit: hostEmit, log: (...a) => log('[engine]', ...a), getDefaults: () => settings.get().defaults, getIdleCloseMs: idleCloseMs, getKeep: keepThroughRestart,
       childEnv: (env) => auth.childEnv(env), startBlock: () => auth.startBlock(), onAuthError: (text) => auth.noteAuthError(text),
+      // Positions (Settings > Team): off until team.enabled; the root and its problem come from main/settings.js
+      team: { settings: () => settings.get().team, root: () => settings.teamRoot(), testMode: TEST,
+        rootProblem: (companyFolders) => teamRootProblem(settings.teamRoot(), { companyFolders }), openPath: (dir) => shell.openPath(dir) },
       // lane installer: the downloaded SDK (a file URL outside the app folder); a checkout imports it from node_modules
       ...(installedSdk ? { sdkEntry: installedSdk.sdk.entryUrl, sdkVersion: installedSdk.sdk.version } : {}) });
   } catch (e) {
@@ -853,6 +869,7 @@ app.whenReady().then(async () => {
   }
   const engineKind = engine.kind === 'fallback' || kind === 'fallback' ? 'fallback' : 'real';
   log(`engine: ${engineKind}`);
+  lastTeamKey = JSON.stringify(settings.get().team || null); // the engine started the team (or not) from these
   // Claude Code's sign-in, a few seconds after start (claude auth status: read-only, prints no secret), so the
   // composer and Settings can say "not signed in" before the first message instead of after it.
   auth.start();

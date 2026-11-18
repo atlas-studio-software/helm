@@ -36,6 +36,7 @@ function groups() {
       ['Settings', k('mod', ',')],
       ['History', k('mod', 'H')],
       ['Deck: every session as a tile', k('mod', 'shift', 'D')],
+      ['Team: your AI staff per company', k('mod', 'shift', 'T')],      // Positions (positions/team.js)
       ['Keyboard shortcuts', ['?'], k('mod', '/')],
       ...(desktopApp && hotkey ? [['Quick prompt, from any app', acceleratorKeys(hotkey)]] : []),   // main/quick.js
       ['Close a dialog, menu or panel', ['Esc']],

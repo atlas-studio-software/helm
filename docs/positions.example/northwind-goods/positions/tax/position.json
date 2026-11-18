@@ -1,0 +1,54 @@
+{
+  "id": "tax",
+  "name": "Tax Specialist",
+  "parent": "legal",
+  "remit": "Sales tax and VAT questions for Northwind Goods orders and payouts.",
+  "scope": {
+    "kind": "company"
+  },
+  "status": "active",
+  "model": null,
+  "effort": "high",
+  "powers": {
+    "read": [
+      "$workspace",
+      "$company"
+    ],
+    "write": [
+      "$workspace"
+    ],
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Write",
+      "Edit",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "bash": "off",
+    "agents": false,
+    "worktree": false
+  },
+  "duties": [
+    {
+      "id": "quarterly-check",
+      "title": "Quarterly tax deadlines check",
+      "enabled": true,
+      "trigger": {
+        "kind": "schedule",
+        "cron": "0 9 1 1,4,7,10 *",
+        "catchUp": "once"
+      },
+      "prompt": "List tax deadlines due in the next 90 days and what is needed for each.",
+      "output": "report"
+    }
+  ],
+  "createdAt": "2026-01-05T09:10:00.000Z",
+  "createdBy": {
+    "proposal": "p_0a03",
+    "by": "legal",
+    "how": "click"
+  },
+  "version": 2
+}

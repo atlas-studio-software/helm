@@ -16,6 +16,7 @@ const profile = 'smoke' + process.pid;
 const userData = path.join(os.tmpdir(), 'helm-test-' + profile);
 const capture = (process.argv.find((a) => a.startsWith('--capture=')) || '').slice(10) || null;
 const electronExe = require(path.join(ROOT, 'node_modules', 'electron'));
+const SEED_BLUR = require(path.join(ROOT, 'main', 'look-sync.js')).SEED.glass.dark.blurPx; // what a fresh profile starts on
 
 let failures = 0, passes = 0;
 function check(name, ok, detail) {
@@ -23,8 +24,15 @@ function check(name, ok, detail) {
   else { failures++; console.log('  FAIL ' + name + (detail ? ' :: ' + detail : '')); }
 }
 
+// Stops the app this script started, by its PID. Windows: taskkill /T on that PID. Elsewhere the app was spawned as
+// its own process group (detached), so the group is killed: Electron's zygote / GPU helpers inherit the stdout pipe
+// and, left alive, keep this script from ever exiting (a Linux CI run once hung here until its timeout).
 function killTree(pid) {
-  try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); } catch {}
+  if (process.platform === 'win32') {
+    try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }); } catch {}
+    return;
+  }
+  try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch {} }
 }
 
 function get(port, p, headers = {}) {
@@ -68,9 +76,9 @@ function client(ws) {
 
 async function main() {
   const args = ['.', '--test', '--profile=' + profile];
-  if (capture) args.push('--capture=' + path.resolve(capture));
+  if (capture) { fs.mkdirSync(path.dirname(path.resolve(capture)), { recursive: true }); args.push('--capture=' + path.resolve(capture)); }   // a fresh checkout has no .shots/
   if (process.argv.includes('--fallback-engine')) args.push('--fallback-engine');
-  const child = spawn(electronExe, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const child = spawn(electronExe, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
   console.log(`started electron pid ${child.pid} (profile ${userData})`);
   let out = '';
   child.stdout.on('data', (d) => { out += d; });
@@ -125,10 +133,11 @@ async function main() {
     console.log(`    engine=${h.engine} sessions=${(h.sessions || []).length} background=${h.settings && h.settings.background.file} backgrounds=${JSON.stringify(h.settings && h.settings.backgrounds)}`);
     if (h.settings && h.settings.background.file) check('/bg/<selected> served', (await get(port, '/bg/' + encodeURIComponent(h.settings.background.file), { cookie })).status === 200);
     else console.log('  skip /bg/<selected> served (no background selected: one check fewer)');
-    // Look Sync: a fresh profile starts on the shared seed (dark glass blur 5, dim .50); a legacy background.dim
+    // Look Sync: a fresh profile starts on the shared seed (main/look-sync.js SEED; dark glass blur 0 since the
+    // 11-16 sharp-glass change); a legacy background.dim
     // lands in the glass of the theme showing and the background mirror follows it
     const set = await c.call('settings.set', { background: { dim: 0.6 } });
-    check('settings.set merges + emits settings.updated', set.result && set.result.background.dim === 0.6 && set.result.glass.dark.dim === 0.6 && set.result.background.blur === 5 && set.result.glass.dark.blurPx === 5 && c.events.some((e) => e.event === 'settings.updated'), JSON.stringify(set.result && { background: set.result.background, glass: set.result.glass }));
+    check('settings.set merges + emits settings.updated', set.result && set.result.background.dim === 0.6 && set.result.glass.dark.dim === 0.6 && set.result.background.blur === SEED_BLUR && set.result.glass.dark.blurPx === SEED_BLUR && c.events.some((e) => e.event === 'settings.updated'), JSON.stringify(set.result && { background: set.result.background, glass: set.result.glass }));
     const badSet = await c.call('settings.set', { theme: 'neon' });
     check('settings.set rejects bad theme with code', badSet.error && badSet.error.code === 'bad_params');
     const tree = await c.call('files.tree', { cwd: ROOT });
@@ -224,10 +233,15 @@ async function main() {
   } finally {
     killTree(child.pid);
     await new Promise((r) => setTimeout(r, 800));
+    // nothing more is read from the app: let go of its pipes so a straggler can't hold this process open
+    child.stdout.destroy(); child.stderr.destroy(); child.unref();
     try { fs.rmSync(userData, { recursive: true, force: true }); } catch {}
   }
   console.log(`\nhost-smoke: ${passes} passed, ${failures} failed`);
   process.exitCode = failures ? 1 : 0;
 }
 
-main().catch((e) => { console.error('host-smoke crashed:', e.message); process.exitCode = 2; });
+// the result is decided once the summary is out: if anything still holds the process open (a straggler's pipe, a
+// socket), exit 3 s later instead of hanging (unref'd, so a normal exit is never delayed and output is never cut)
+main().catch((e) => { console.error('host-smoke crashed:', e.message); process.exitCode = 2; })
+  .finally(() => setTimeout(() => process.exit(process.exitCode), 3000).unref());

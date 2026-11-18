@@ -42,6 +42,7 @@ const { computeChanges } = require('./changes');
 const { projectsDir: defaultProjectsDir, findTranscript, lastCostState } = require('./transcript');
 const { findLineByUuid } = require('./pager');
 const { createExternalTracker } = require('./external');
+const { createTeamWiring } = require('./team/wire'); // Positions (docs/POSITIONS.md): inert until settings team.enabled
 const LOG_LEVELS = { debug: 10, info: 20, warn: 30, error: 40 }; // lane logs: see createEngine's log
 const { createIdleReaper } = require('./idle-reaper');
 const { jobSafe } = require('./broker-launch'); // lane detach
@@ -364,10 +365,13 @@ function createEngine(options = {}) {
     };
   }
 
+  // Positions: chats inside the team root are not Past / Elsewhere material (POSITIONS 10.1)
+  function teamExcludes() { return ctx.team ? ctx.team.excludeDirs() : []; }
+
   function getHistory() {
     if (!history) {
       const { createHistoryIndex } = require('./history');
-      history = createHistoryIndex({ projectsDir, cacheFile: path.join(userDataDir, 'history-index.json'), log });
+      history = createHistoryIndex({ projectsDir, cacheFile: path.join(userDataDir, 'history-index.json'), log, excludeDirs: teamExcludes });
     }
     return history;
   }
@@ -429,7 +433,7 @@ function createEngine(options = {}) {
     }
     return set;
   };
-  const external = createExternalTracker({ projectsDir, etaDir: options.etaDir || undefined, isOwned: (cid) => ownedIds().has(cid), emit, log, ...(options.tempDir ? { tempDir: options.tempDir } : {}) });
+  const external = createExternalTracker({ projectsDir, etaDir: options.etaDir || undefined, isOwned: (cid) => ownedIds().has(cid), emit, log, excludeDirs: teamExcludes, ...(options.tempDir ? { tempDir: options.tempDir } : {}) });
   if (options.external !== false) external.start();
 
   // lane reaper: close a session's CLI once it is truly idle (es.busyState(), the restart gate's own check,
@@ -829,7 +833,37 @@ function createEngine(options = {}) {
     },
   };
   // lane handoff: sessions.handoff / sessions.handoffCancel ("Fresh start with handoff", main/engine/handoff.js)
-  Object.assign(methods, require('./handoff').createHandoff({ get, onSend: (es) => reaper.unmark(es), log }).methods);
+  const handoffs = require('./handoff').createHandoff({ get, onSend: (es) => reaper.unmark(es), log });
+  Object.assign(methods, handoffs.methods);
+
+  // Positions (docs/POSITIONS.md, PROTOCOL "Positions"): the team store, runtime, duties, proposals and access requests.
+  // Nothing is created until settings team.enabled; team.list answers either way. A position chat is a normal session
+  // with s.position (created lazily by the runtime); a CEO chat is any session whose folder is in a company.
+  async function createTeamSession(p = {}) {
+    const data = newSessionData({ cwd: p.cwd, model: p.model, effort: p.effort });
+    if (!fs.existsSync(data.cwd)) throw err(`Folder not found: ${data.cwd}`, 'bad_request');
+    if (p.title) { data.title = String(p.title).slice(0, MAX_TITLE); data.titleAuto = false; }
+    if (p.position) {
+      data.position = p.position;
+      data.project = `Team · ${p.position.companyName || p.position.company}`; // never one of the owner's project groups
+      data.permissionMode = 'bypassPermissions'; // the team guard is the gate (POSITIONS 7.3)
+    }
+    const es = new EngineSession(ctx, data);
+    sessions.set(data.id, es);
+    emit('session.created', es.publicSession());
+    save();
+    return es;
+  }
+  const teamOpts = options.team || {};
+  ctx.team = createTeamWiring({
+    settings: teamOpts.settings || (() => ({})), root: teamOpts.root, rootProblem: teamOpts.rootProblem, openPath: teamOpts.openPath,
+    ownerName: teamOpts.ownerName, testMode: !!teamOpts.testMode, z: teamOpts.z,
+    userDataDir, log, emit, save: () => save(), sessions, viewedBy: (id) => viewedBy(id),
+    createSession: createTeamSession, handoff: (p) => handoffs.handoff(p),
+    usagePct: () => { const u = usage.get() || {}; return u.fiveHour && typeof u.fiveHour.percent === 'number' ? u.fiveHour.percent : null; },
+    claudePath: ctx.claudePath, loadSdk,
+  });
+  Object.assign(methods, ctx.team.methods);
 
   // Params come straight from any client: null / a list / a string must not crash a method.
   // The router passes the calling client second (sessions.release / sessions.viewing use it).
@@ -888,6 +922,9 @@ function createEngine(options = {}) {
     for (const es of sessions.values()) if (es.s.kept || brokersExist) es.keepPending = keepPass;
     keepPass.then(() => { for (const es of sessions.values()) es.keepPending = null; });
   }
+  // Positions: the runtime and duties start after the sessions are restored and the broker pass re-attached what it kept
+  // (a no-op while team.enabled is off).
+  Promise.resolve(keepPass).then(() => setImmediate(() => { try { ctx.team.start(); } catch (e) { log('error', `engine: Positions failed to start: ${e.message}`); } }));
 
   function snapshot() {
     const list = [...sessions.values()].map((es) => es.publicSession()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -932,6 +969,7 @@ function createEngine(options = {}) {
     for (const es of sessions.values()) es.killShells(); // `!` runs: process trees by PID, kept as stopped
     external.stop();
     reaper.stop();
+    try { ctx.team.stop({ recycle: false }); } catch (e) { log('warn', `engine: Positions stop failed: ${e.message}`); } // before the CLIs close
     clearInterval(stallTimer); // lane stall
     if (usageHistory) usageHistory.stop();
     await Promise.all([...sessions.values()].filter((es) => es.live() || es.starting).map((es) => es.close({ final: false }).catch(() => {})));
@@ -977,6 +1015,9 @@ function createEngine(options = {}) {
     shutdown,
     recycleClis,
     busy,
+    // Positions: main.js calls refresh() on settings.updated, poke() on window focus / power resume, and gives
+    // settings the company folders for the team.root check
+    team: { refresh: () => ctx.team.refresh(), poke: (r) => ctx.team.poke(r), companyFolders: () => ctx.team.companyFolders(), status: () => ctx.team.status() },
     // lane tabrelease: a client disconnected; whatever it had on screen is no longer viewed (main.js onClient)
     clientClosed(client) {
       viewers.delete(clientKey(client));

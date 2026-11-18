@@ -1461,3 +1461,195 @@ Worktrees panel).
   `--focus-ring-on-accent`. Focused, a selected control trades any outer lift shadow for the ring (a blur
   reaches the next control across a tight gap).
   Heavy (headless Chromium): run it in the heavy-test queue.
+
+## Positions (lane positions, 2026-11-17)
+
+AI staff for each company, arranged as an org tree under the CEO. The design is `docs/POSITIONS.md` (section
+numbers below refer to it); this is the wire contract. Off unless `settings.team.enabled` (Settings > Team; off by
+default).
+
+While it is off nothing of it runs (no team store, watcher or timers) and:
+- no session gets the `team` MCP server (idle CLIs drop it at their next start);
+- `team.list` still answers: `{ enabled: false, root, rootProblem?, companies: [] }` (no `proposals`);
+- every other `team.*` method rejects with code `disabled`;
+- a position chat does not start: its CLI start fails with code `disabled` ("Positions is off. Turn it on in
+  Settings > Team to use this chat."), so it never runs with the user's full setup;
+- turning it on or off (any `team.*` settings change) emits `team.updated { company: null }`; no other `team.*`
+  event fires while it is off.
+
+On but not running (the team root failed to open, or Positions failed to start): `team.list` answers `{ enabled:
+true, root, rootProblem, companies: [] }`, every other `team.*` method rejects with `root_problem` (the message is the
+problem, or "Positions is starting."), and a position chat's start fails with `disabled` ("Positions could not start:
+<problem>").
+
+Words: a **company** is `company.json` (id, name, folders). A **CEO session** is any normal session whose cwd is
+inside a company folder (or a git worktree of one). A **position** is one role (`position.json` + `brief.md` +
+`notebook.md` + its chats) whose `parent` is another position or `null` (reports to the CEO). Position and company
+ids are `[a-z0-9-]{1,40}`; position ids are flat and unique per company. Tickets are `t_<id>`, proposals `p_<id>`,
+grants `g_<id>`, inbox entries `n_<id>`; these are unique across companies.
+
+Error codes (besides the usual `bad_params`): `disabled` (Positions is off), `not_found` (company, position, file,
+ticket, proposal or duty unknown), `conflict` (`team.file.write` lost a race), `refused` (the shape is fine but not
+now; the message says why, e.g. a proposal that is no longer open, pausing a retired position), `root_problem` (the
+team root fails the 2.1 rules, or Positions is still starting; the message says which), `unsupported`
+(`team.openFolder` from a client that is not the desktop app).
+
+### Session fields
+```js
+position?: { company: "example-co", companyName: "Example Co", id: "tax", name: "Tax Specialist",
+             parent: "legal" | null, chat: 2, seeded?: true, ended?: true } // a position's chat (chat = n in chats.json)
+team?: { company: "example-co", companyName: "Example Co" }         // a CEO session (cwd matched a company)
+```
+- A position chat's `title` is the position name and its `cwd` is the position's workspace
+  (`<team root>/<company>/positions/<id>`, or its git worktree when `powers.worktree`). An ended chat is also
+  `archived: true` and keeps its transcript; the UI replaces its composer with a link to the current chat.
+- `seeded`: the chat's first message has gone out carrying the notebook seed (8.1); a brief or notebook edit after
+  that reaches the chat as a `<helm-note>` on its next message.
+- A session has at most one of the two. `team` is recomputed at every CLI start, so it can appear on an existing
+  session after a company is approved (the next `session.updated` carries it).
+
+### Item additions
+- `user` items:
+  - `origin?: "ask" | "duty" | "seed" | "answer"` (absent = typed by the user). All of these are sent with
+    `origin: "helm"`, so they never count as the user's own words (prod-guard, typed approval).
+  - `ask?: { ticket, from: { kind: "ceo" | "position", id: id | null, name }, kind: "report" | "colleague",
+    handed: [path] }` on an `origin: "ask"` item (the "Asked by …" bubble).
+  - `duty?: { id, title, trigger, due? }` on an `origin: "duty"` item. `trigger` is the
+    run's trigger in words: `"schedule <cron>"`, `"commit <folder> <branch>"`, `"release <folder> <tag>"`,
+    `"file <path>"` or `"manual"` (a "Run now").
+  - `seed?: { handoff: boolean, seeded: true }` on a position chat's first message, whatever its origin: that message
+    carried the notebook seed (8.1). `handoff`: the seed included the handoff the previous chat wrote.
+  - `answer?: { ticket, from: { id, name }, state: "answered" | "late" | "expired", followup?: true }` on an
+    `origin: "answer"` item (a late `<helm-answer>` delivered into the asker's chat; `followup`: an addendum to an
+    earlier answer).
+- `tool` items `mcp__team__team_ask`, `mcp__team__colleague_ask` and `mcp__team__team_ticket` carry `team?: { ticket,
+  company, state, detail, chain: [{ ticket, parentTicket: id | null, to, name, state, detail, sinceMs }] }`, patched
+  live (`session.itemUpdate`) on every `team.ask.updated` for that ticket: the item is found by the event's
+  `toolUseId` when the CLI gave one, else as that chat's running ask. `state` is a ticket state (below). `detail` is
+  the state in words ("queued: waiting for Legal to be free", "working 6m", "waiting on Tax Specialist").
+- `request` items: `kind: "access"` with `access: { kind: "read" | "write" | "tool" | "bash" | "outward", target,
+  why, position: { id, name, path: ["Legal", "Tax Specialist"] }, ancestors?: ["legal"], outward: boolean,
+  onceOnly?: true, warn?: true, command?: string, waitMin: 30 }`.
+  - `ancestors`: the positions an "Approve always" would also widen, nearest first (the button then reads "Approve
+    always (also widens Legal)"). `command`: the exact Bash command, or the tool input as JSON, for an outward card.
+  - `onceOnly`: "Approve always" cannot be kept, so offer Approve once / Deny only. Set when the target is beyond the
+    company (a path outside the company folders can never be a standing power). Outward cards are once-only too but
+    carry `outward: true` instead.
+  - `warn`: the target is inside `~/.claude` (Claude settings and history); the card body says so.
+  - The answer is `sessions.respond { behavior: "allow", scope: "once" | "always" } | { behavior: "deny",
+    message? }`. `always` is answered as once for outward and `onceOnly` cards, and when saving to `position.json`
+    fails (the note says why). With no answer in `waitMin` minutes the card closes as timed out (`status:
+    "cancelled"`, `answer: { timedOut: true }`) and the position is told `no-answer`.
+- New item `type: "team"` (a Helm item: no turn, never sent to Claude): `kind: "proposal" | "answer" | "notice"`,
+  - `proposal?` (with `key`: the proposal id, used to patch it): `{ id, company, action: "create" | "edit" |
+    "retire" | "company", title, why, draft, diff?, excess?, status: "open" | "approved" | "declined" |
+    "superseded", by: { kind: "ceo" | "position" | "none" | "import", id?, name?, sessionId? }, target, parent?, at,
+    ref?, error?, decidedAt?, decision?: { at, how?, quote?, result, note? }, decidedHow?: "click" | "typed", quote?,
+    note?, result? }`.
+    - `company` is `null` until a proposed company (`action: "company"`) is approved. `target`: the position id (the
+      new company's id for `company`; `null` for an edit of the company itself).
+    - `draft` is the full `position.json` draft plus `brief` (for `company`: `{ id, name, folders }`).
+    - `diff`, on an edit of a position: `{ brief?: unifiedDiff, powers?: { added: [], removed: [] }, duties?: {
+      added: [id], removed: [id] }, parent?: { from, to }, name? | remit? | model? | effort? | scope?: { from, to },
+      excess? }`; on an edit of the company: `{ folders: { added: [], removed: [] }, name?: { from, to } }`.
+    - `excess`: what the draft's powers go beyond the manager (kept, but cut by the tree rule).
+    - `error`: why the last approval failed re-validation (the card stays open). `result`: the approval in words
+      ("Tax Specialist created under Legal"). `ref`: the item's `ref` for an imported proposal.
+  - `answer?: { ticket, from: { id, name }, text, state, followup?: true }`: the "Legal answered after you stopped"
+    card (Show, Send to CEO).
+  - `text?`: a notice, e.g. "Fresh chat started: this one was full".
+
+### Ticket states
+`asked` (queued, not delivered yet) · `delivered` (the answerer's turn is running) · `pending` (the asker's call
+returned without the answer; the ticket goes on) · `answered` · `late` (answered after its caller stopped waiting,
+or past expiry and still being worked on) · `expired` (2 h after the root ask) · `cancelled`. `refused` (with
+`reason`) appears only in `team.crosstalk`: a refused ask never becomes a live ticket, it is only logged.
+
+### RPC
+
+| method | params | result |
+| --- | --- | --- |
+| `team.list` | `{}` | `{ enabled, root, rootProblem?, companies: [{ id, name, folders, positions: n, needsYou: n }], proposals?: [proposal] }`. `root` is the resolved team root. `positions` counts live (active + paused) positions. `needsYou` = pending access requests + open proposals + undismissed inbox entries with `needsOwen`. `proposals`: the open proposals for companies that do not exist yet (`action: "company"`, `company: null`; shape as in the `team` item), present only when there are any. Off or not running: `companies: []` and no `proposals` (see above) |
+| `team.get` | `{ company }` | `{ company: { id, name, folders }, tree: [{ id, name, parent, remit, status: "active" \| "paused", depth, reports: [id], openItems: n, nextDuty?: { id, title, at }, busy?: "answering CEO", pending: { requests: n, proposals: n }, problem? }], proposals: [proposal], limits }`. `tree` is depth-first in display order (top-level positions have `depth: 1`). `openItems`: unchecked `- [ ]` lines in the notebook. `busy`: "answering CEO" / "answering Legal" / "running duty Monthly review" / "starting a fresh chat". `pending.proposals` counts the open proposals whose `target` or `parent` is that position. `problem`: why a hand-edited `position.json` failed validation (the last good version stays in force). `proposals`: the company's proposals, open and decided (decided ones are kept 7 days), newest first. `limits`: `{ depthCap: 5, reportsPerManager: 10, positionsPerCompany: 30, asksPerPositionHour: 20, asksPerCompanyDay: 200, subAsksPerTicket: 3, chainTickets: 8, expiryH: 2, waitS: [30, 600], questionChars: 20000, colleagueChars: 2000 }` |
+| `team.position` | `{ company, id }` | `{ position: { ...position.json, effective: powers \| null, limitedBy: { "<key>": "<id>" } }, chats: [chats.json entry], duties: [{ ...duty, nextAt?, last?: { at, state, reason?, ticket? } }], grants: [grants.jsonl line], pending: { requests: [{ requestId, sessionId, access, kind, target, at }], proposals: [proposal] } }`. Also answers for a retired position (`status: "retired"`, `effective: null`, `limitedBy: {}`). See "limitedBy" below. `pending.requests`: the position's open access cards, oldest first (`access` as on the `request` item; Team view answers one in place: `sessions.respond { id: sessionId, requestId, response }`). `pending.proposals`: open proposals whose `target` or `parent` is this position. `grants` is newest first (at most the last 200 lines of the company's log) |
+| `team.file.read` | `{ company, id, file: "brief" \| "notebook" }` | `{ text, mtime }` |
+| `team.file.write` | `{ company, id, file, text, expectMtime }` | `{ mtime }`. `conflict` when the file changed after `expectMtime`. The previous text is kept as `<file>.bak` (like claude-config). A brief save adds an inbox `flag` entry ("Brief edited by …", `needsOwen: false`). If the position's chat has started, its next message carries the change as a `<helm-note>` (a chat not started yet reads the new file in its seed). Refused (`not_found`) for a retired position |
+| `team.open` | `{ company, id }` | `{ sessionId }`: the position's current chat, created lazily (no turn starts) |
+| `team.openCeo` | `{ company }` | `{ sessionId }`: the newest CEO session in that company, else a new one in its first folder that exists (`refused` when none does) |
+| `team.decide` | `{ proposal, decision: "approve" \| "decline", note? }` | `{ ok, created?: { company, id? }, error? }`. `created` on an approved create (`{ company, id }`) or company (`{ company }`). `ok: false` with `error` when an approval fails re-validation (the card stays open and says why). `not_found` for an unknown proposal, `refused` when it is no longer open |
+| `team.proposals` | `{ company?, status?, includeDecided? }` | `{ proposals: [proposal] }`, newest first. `company`: omitted = every company; `null` = proposed companies (`company: null`); an id = that company's. `status`: only that status. `includeDecided` defaults to `true` (`false` = open only) |
+| `team.proposals.import` | `{ json }` | `{ imported: [{ id, ref, action, target }], skipped: [{ ref, reason }] }`. `json` is a proposals file (the object, or its text): `{ kind: "helm-team-proposals", company, draftedBy?, proposals: [{ ref?, status?: "pending", team_propose: { action, why, ...fields }, notebook_md? }] }`. Every valid pending item becomes an OPEN card (nothing is approved), proposed `by: { kind: "import", name: draftedBy }`; an item already open (same action, company and target) is skipped. A create may name a company that does not exist yet (say, one the same file proposes with an `action: "company"` item); that card has `company` set to the new id, so it shows in `team.proposals` now and in `team.get` once the company exists. `tools/team-import-proposals.js <file> [--dry-run]` calls it |
+| `team.ask.cancel` | `{ ticket }` | `{ state }`. A queued ask is withdrawn; a working one is marked `cancelled` (its answer is logged, not delivered) |
+| `team.ask.release` | `{ ticket }` | `{ state }`: "Let it answer now" (5.3). Delivers an ask that waits behind the user as the next message. Never interrupts a running turn |
+| `team.answer.forward` | `{ sessionId, ticket }` | `{ itemId }`: the answer card's "Send to CEO" (sends the answer into that chat as an `origin: "answer"` message) |
+| `team.duty.run` | `{ company, id, duty }` | `{ ticket }`: a run the user started (logged `trigger: "manual"`) |
+| `team.duty.toggle` | `{ company, id, duty, enabled }` | `{ ok }` (on/off is operational, like pause: no proposal) |
+| `team.pause` | `{ company, id, paused }` | `{ status }`. Paused: no duties, asks refused with "paused"; the user can still chat |
+| `team.crosstalk` | `{ company, position?, before?, limit? }` | `{ entries: [{ ticket, parentTicket?, chain, from: { kind, id?, name }, to, toName, kind: "report" \| "colleague" \| "duty", state, question, handed?, answer?, followups?: [{ at, text }], reason?, askedAt, answeredAt?, tookMs?, costUsd? }], hasMore }`. One entry per ticket (the crosstalk.jsonl lines folded), newest first. `before` is a ticket id; `limit` default 50, max 200; `position` keeps the tickets to or from it. `followups`: addenda sent after the answer |
+| `team.inbox` | `{ company, limit? }` | `{ entries: [{ at, id, position, kind: "duty-report" \| "flag" \| "proposal", title, text, files?, ticket?, proposal?, needsOwen, dismissedAt? }] }`, newest first (`limit` default 200, max 1000). `position` is `null` on a line about the company itself. (`"notice"` is reserved; nothing writes one yet) |
+| `team.inbox.dismiss` | `{ company, ids: [id] }` | `{ dismissed: n }` (each dismissal is appended as its own line) |
+| `team.openFolder` | `{ company, id? }` | `{ ok }`: opens the company's (or the position's) folder in the file manager. Desktop only: from any other client it rejects with `unsupported` |
+
+`position.limitedBy` (in `team.position`) names, for each power the position's own `position.json` lists but cannot
+use, who cuts it: `{ "<key>": "<id>" }`.
+- Keys: `read:<path>` and `write:<path>` (a folder in its own `powers.read` / `powers.write`, expanded and
+  normalised with forward slashes, that the tree does not cover), `tools:<Tool>` (e.g. `tools:WebFetch`; an agent
+  tool cut by `agents`, or Bash / PowerShell cut by `bash: "off"`, is keyed here too), and bare `bash`, `agents`,
+  `worktree`.
+- The value is the first level from the top that cuts it: `"company"` when the company level (its folders, every
+  tool) already does, else the id of the farthest ancestor whose effective powers do not cover it.
+- Example: `{ "tools:WebFetch": "legal", "read:C:/Users/you/finance": "company", "bash": "legal" }`.
+- Empty `{}` when nothing is cut, and for a retired position.
+
+### Events
+
+| event | data |
+| --- | --- |
+| `team.updated` | `{ company }`: anything in that company's tree changed (an approval, a pause, a hand edit, a duty's next time, an inbox dismissal). `company: null` = the whole list (Positions turned on or off, the team settings or root changed). The UI re-fetches `team.get` (and `team.position` if one is open), or `team.list` for `null` |
+| `team.ask.updated` | `{ company, ticket, chainId, state, detail, from: { kind: "ceo" \| "position" \| "owen" \| "helm", id?, name }, to, toName, kind: "report" \| "colleague" \| "duty", parentTicket: id \| null, toolUseId: id \| null, chain: [{ ticket, parentTicket: id \| null, to, name, state, detail, sinceMs }], sessionIds: [id] }`. Sent on every state change of any ticket (asks and duty runs), with the whole chain. `from.kind` is `"owen"` for a duty run the user started ("Run now") and `"helm"` for a scheduled or event duty. `toolUseId`: the asker's `team_ask` / `colleague_ask` / `team_ticket` tool use, when the CLI gave one (Helm patches that tool item's `team` field). `sessionIds` are the asker and answerer chats it touches |
+| `team.proposal.updated` | `{ company, proposal }` (`proposal` as in the `team` item; `company: null` for a proposed company). Sent when a card opens, is superseded, decided, fails re-validation (`error`) or its `excess` changes. Every copy of the card (the proposing chat, Team view, other clients) updates together |
+| `team.access.updated` | `{ company, request: { id, requestId, company, position, sessionId, kind, target, at, access, state: "open" \| "closed" } }`: an access card opened or closed (answered, timed out, cancelled, or its chat ended). `access` as on the `request` item; `id` is Helm's own card id (`g_…`), `requestId` the session request's. An "Approve always" that saved powers is followed by `team.updated` |
+| `team.inbox.appended` | `{ company, entry }` (entry as in `team.inbox`) |
+| `notify` | `{ kind: "waiting", source: "team", title, body, sessionId? }` for pushes: an access or outward request, a proposal from a position, a duty report with `needs_owen`. push.js already passes `waiting` |
+
+Access requests also use the normal session machinery: the position's session goes `waiting` with a `request`
+item, so the toast, the Deck tile, the phone push and Home "needs you" fire as for any request.
+
+### Settings
+```js
+team: {
+  enabled: false,          // Settings > Team > "Positions"
+  root: "~/helm-team",     // the team root; "~/" = the home folder (see below)
+  maxConcurrentRuns: 2,    // 1..8: position turns at once, machine-wide (asks and duties)
+  usageCeilingPct: 80,     // 1..100: duties wait while the 5-hour window is at or above this (logged skipped: usage)
+  dutiesPaused: false,     // pauses every duty
+  rollPct: 32,             // 5..90: a position chat rolls to a fresh one at its next quiet moment from here
+  rollNowPct: 40,          // 5..95: ... and as soon as the turn ends from here. rollPct < rollNowPct
+  askWaitS: 300,           // 30..600: the CEO's default team_ask wait before it returns pending
+  askWaitPositionS: 180,   // 30..600: a position's default team_ask / colleague_ask wait
+  askWaitMaxS: 600,        // 30..600: the most any wait_s may be; both defaults <= this. Team server timeout = this + 60 s
+}
+```
+- A partial `team` object merges onto the current one (`settings.set({ team: { enabled: true } })`). Unknown keys,
+  wrong types, out-of-range numbers and crossed pairs (`rollPct >= rollNowPct`, a default wait above
+  `askWaitMaxS`) are refused with `bad_params`. A hand-edited bad value falls back to its default, per value.
+- `team.root` (2.1): `settings.set` refuses, with the reason in words, a folder that is relative, a drive root,
+  the home folder itself, inside a git work tree (a `.git` folder or file there or in any parent folder), or inside
+  or containing a company folder. Re-saving the current root is never refused. A hand-edited bad root is kept and
+  reported as `team.list` `rootProblem`.
+- `main/settings.js` exports `TEAM_DEFAULTS`, `resolveTeamRoot(root, home)` and
+  `teamRootProblem(root, { home, companyFolders })`; the settings object has `teamRoot()` (the resolved path), and
+  `createSettings({ teamCompanyFolders: () => [folder] })` lets the engine supply the company folders for the check.
+- Test-only: `HELM_TEST_TEAM_ROLL_PCT` overrides `rollPct` (tools/team-live.js).
+
+### Mock
+- `ui/lib/mock-data.js`: `settings.team` (on), a CEO session `s_ceo` (`team`; a live Ask card on Legal with a
+  chain to Tax Specialist) and Legal's current chat `s_pos_legal` (`position`, chat 2: a seed line, an "Asked by
+  CEO" bubble, its own `team_ask` to Tax Specialist). Legal's ended chat 1, `s_pos_legal_1`, is in `sessionsOrg`
+  (`?org=1`). All use company `example-co` ("Example Co") and positions `legal` and `tax`.
+- `ui/lib/mock-positions.js`: the `team.*` methods for "Example Co" with a 3-level tree, an open proposal, an
+  access request and a live ask chain, wired by one `case 'team.*'` line in `ui/lib/transport.js`, like
+  mock-handoff.
+- Tests: `test/host/settings-team.test.js` (the settings keys); `test/engine/team-wiring.test.js` (the `team.*`
+  RPCs and events over the real wiring, incl. `disabled`); `test/engine/team-*.test.js` (store, tree, runtime,
+  proposals, access, duties, guard, mcp); `test/host/team-*.test.js` (cards, shell, notify).

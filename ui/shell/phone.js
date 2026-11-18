@@ -10,7 +10,7 @@
 //  - PhoneHealth: phone.status (main/phone.js) as a checklist with the exact fix per failing item.
 //  - openFind(): the phone has no Ctrl+F; this fires the same shortcut the chat pane listens for.
 //  - tailnet HTTPS (main/https.js): registers the service worker (ui/sw.js), follows its notification
-//    clicks (and /?session=<id>), reports phone.visible so Helm doesn't push while this page is in view,
+//    clicks (and /?session=<id>, or /?view=team&company=<id> for a team notice: ./select-route.js), reports phone.visible so Helm doesn't push while this page is in view,
 //    and PushControl: the phone's own "Turn on notifications" (Web Push needs a tap for permission).
 // Owner: lane phone.
 import { effect, signal } from '@preact/signals';
@@ -18,7 +18,8 @@ import { useState, useEffect } from 'preact/hooks';
 import { html } from '../lib/html.js';
 import { Icon } from '../lib/icons.js';
 import { sessions, settings, appInfo, ready, rpc, isMock, toast } from '../lib/store.js';
-import { openSession } from './state.js';
+import { openSession, go } from './state.js';
+import { routeSelect } from './select-route.js';
 
 // ---------------------------------------------------------------- attention
 const isWebClient = () => appInfo.value.platform !== 'electron';
@@ -112,24 +113,30 @@ if (swSupported()) {
   navigator.serviceWorker.register('/sw.js', { scope: '/' })
     .then(() => { swState.value = { state: 'ok', error: null }; })
     .catch((e) => { swState.value = { state: 'error', error: (e && e.message) || String(e) }; });
-  // a notification tapped while Helm is open: show that session
-  navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.type === 'helm.select' && e.data.sessionId) openWhenKnown(e.data.sessionId); });
+  // a notification tapped while Helm is open: show that session, or (a team notice) the Team view on its company
+  navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.type === 'helm.select') selectFromPush(e.data); });
 }
 
-function openWhenKnown(id) {
-  let tries = 0;
-  const go = () => { if (sessions.value.some((s) => s.id === id)) openSession(id); else if (tries++ < 25) setTimeout(go, 200); };
-  go();
+// { sessionId } or { view: 'team', company? }, the same rules as the host's app.select (./select-route.js).
+// The Team view's state is imported lazily (positions/state.js pulls in shell/state.js).
+function selectFromPush(msg) {
+  return routeSelect(msg, {
+    go, openSession, tries: 25,
+    hasSession: (id) => sessions.value.some((s) => s.id === id),
+    setCompany: (cid) => import('../positions/state.js').then((m) => m.setCompany(cid)),
+  });
 }
-// /?session=<id>: a notification tapped while Helm was closed (ui/sw.js openWindow)
+// /?session=<id>, or /?view=team&company=<id>: a notification tapped while Helm was closed (ui/sw.js openWindow)
 if (typeof location !== 'undefined') {
   const params = new URLSearchParams(location.search);
   const want = params.get('session');
-  if (want) {
-    params.delete('session');
+  const team = !want && params.get('view') === 'team';
+  if (want || team) {
+    const msg = want ? { sessionId: want } : { view: 'team', company: params.get('company') || null };
+    for (const k of ['session', 'view', 'company']) params.delete(k);
     const rest = params.toString();
     try { history.replaceState(history.state, '', location.pathname + (rest ? '?' + rest : '') + location.hash); } catch {}
-    const stop = effect(() => { if (ready.value) { queueMicrotask(() => stop()); openWhenKnown(want); } });
+    const stop = effect(() => { if (ready.value) { queueMicrotask(() => stop()); selectFromPush(msg); } });
   }
 }
 

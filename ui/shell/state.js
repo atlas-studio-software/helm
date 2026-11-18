@@ -6,13 +6,15 @@ import { mockBgUrl, on } from '../lib/transport.js';
 import { washFor } from '../lib/wash.js';
 import { paintedGlass } from '../lib/glass.js';   // lane wk-light: which glass paints (light look un-held)
 import { sessionSplit } from './activity.js';
-import { buildProjectGroups } from '../lib/session-activity.js';
+import { buildProjectGroups, isPositionSession } from '../lib/session-activity.js';
+import { routeSelect } from './select-route.js';   // app.select: a session, or (Positions) the Team view
 
 function load(key, fallback) { try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); } catch { return fallback; } }
 function persist(sig, key) { effect(() => { const v = sig.value; try { localStorage.setItem(key, JSON.stringify(v)); } catch {} }); }
 
 // 'home' | 'session' | 'history' | 'settings' | 'queue' (queue is phone-only; desktop shows it in the inspector)
 //   | 'deck' (every session as a live tile: ui/deck/deck.js, lane deck)
+//   | 'team' (Positions: a company's AI staff as an org tree under the CEO: ui/positions/team.js, lane T6/T10)
 // lane home: Helm opens on Home (greeting, glance, session cards over the unblurred wallpaper: shell/home.js).
 export const view = signal('home');
 export const sidebarOpen = signal(load('helm.sidebar.open', true) !== false);
@@ -201,13 +203,22 @@ export function switchToIndex(i) { const s = orderedSessions.value[i]; if (s) op
 // Projects for grouping: settings.projects first (pinned, then listed order), then any extra
 // projects that only exist on sessions, by most recent activity.
 // Archived sessions live in their own collapsed group at the end of the sidebar, not in projects.
-export const archivedSessions = computed(() => sessions.value.filter((s) => s.archived));
+// A position's ended or archived chats are listed in the Team view, never here (spec 10.1).
+export const archivedSessions = computed(() => sessions.value.filter((s) => s.archived && !isPositionSession(s)));
+// Positions (spec 10.1): live or recent position chats, for the sidebar's Team section (a sibling of Elsewhere and
+// Past; it collapses like Past). Rows stay put: by company, then position name, never by activity.
+export const teamOpen = signal(load('helm.sidebar.team.open', true) !== false);
+persist(teamOpen, 'helm.sidebar.team.open');
+const byPosition = (a, b) => String(a.position.companyName || a.position.company).localeCompare(String(b.position.companyName || b.position.company))
+  || String(a.position.name || a.title).localeCompare(String(b.position.name || b.title)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+export const teamSessions = computed(() => [...sessionSplit.value.team].sort(byPosition));
 // lane sessions: only active sessions (idle ones move to Past, activity.js), in START order (the user: the
 // list kept moving). Projects: pinned first, then by newest session start; never by activity.
 export const projectGroups = computed(() => buildProjectGroups(sessionSplit.value.active, settings.value?.projects || []));
 effect(() => {
   const out = [];
   for (const g of projectGroups.value) if (!collapsedGroups.value[g.key]) out.push(...g.sessions);
+  if (teamOpen.value) out.push(...teamSessions.value);   // the sidebar shows Team after the project groups
   orderedSessions.value = out;
 });
 
@@ -215,11 +226,11 @@ effect(() => {
 effect(() => { if (!activeId.value && phoneScreen.value === 'session') phoneScreen.value = 'list'; });
 
 // Host asks a client to show a session (quick-prompt window, notification click). The desktop window is
-// already selected host-side; this makes the phone (and any other client) follow.
-// A just-created session may land (session.created) a moment after the select event, so retry briefly.
-on('app.select', ({ sessionId } = {}) => {
-  if (!sessionId) return;
-  let tries = 0;
-  const go = () => { if (sessions.value.some((s) => s.id === sessionId)) openSession(sessionId); else if (tries++ < 10) setTimeout(go, 200); };
-  go();
-});
+// already selected host-side; this makes the phone (and any other client) follow. A team notice without a session
+// (Positions) sends { view: 'team', company? } instead: the Team view on that company. Rules: ./select-route.js.
+// (The Team view's state is imported lazily: positions/state.js imports this module.)
+on('app.select', (msg) => routeSelect(msg, {
+  go, openSession,
+  hasSession: (id) => sessions.value.some((s) => s.id === id),
+  setCompany: (cid) => import('../positions/state.js').then((m) => m.setCompany(cid)),
+}));

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { html } from '../lib/html.js';
 import { Icon } from '../lib/icons.js';
 import { activeId, updateSession, toast, sessions, externalView, settings, saveSettings } from '../lib/store.js';
-import { projectGroups, archivedSessions, collapsedGroups, openSession, newSessionOpen, view, isPhone, orderedSessions } from './state.js';
+import { projectGroups, archivedSessions, collapsedGroups, openSession, newSessionOpen, view, isPhone, orderedSessions, teamSessions, teamOpen, go } from './state.js';
 import { cx, ago, useTick, useMenu, Menu, mod } from './util.js';
 import { UsageMeter } from '../panels/index.js';
 import { split, openSplit, dragSession } from './split.js';
@@ -29,7 +29,7 @@ function matches(s) {
   if (st.length && !st.includes(displayStatus(s))) return false;
   const q = sidebarQuery.value.trim().toLowerCase();
   if (!q) return true;
-  const hay = `${s.title || ''}\n${s.project || ''}\n${s.cwd || ''}`.toLowerCase();
+  const hay = `${s.title || ''}\n${s.project || ''}\n${s.cwd || ''}${s.position ? `\n${s.position.companyName || ''}\nteam` : ''}`.toLowerCase();
   return q.split(/\s+/).every((w) => hay.includes(w));
 }
 
@@ -76,6 +76,12 @@ function subline(s) {
   return null;
 }
 
+// A position chat (Positions, spec 10.1) names its company first: "Example Co · Answering CEO", or the company alone
+// when it is idle (it is listed because it was used in the last hour).
+function teamSubline(s) {
+  return [s.position.companyName || s.position.company, subline(s)].filter(Boolean).join(' · ');
+}
+
 // "Stopped by restart · 5 agents" | "Stopped by restart"
 function restartSubline(n) {
   const a = Math.max((n.agents || []).length, Number(n.agentsTotal) || 0);
@@ -92,7 +98,7 @@ export function SessionRow({ s, inPast = false, at = null }) {
   const picked = selected.value.includes(s.id);
   const eta = s.status === 'working' && etaInfo(s.eta, true) ? html`<${EtaChip} eta=${s.eta} working=${true} />` : null;
   const m = useMenu();
-  const sub = subline(s);
+  const sub = s.position ? teamSubline(s) : subline(s);
   const index = s.archived ? -1 : orderedSessions.value.findIndex((x) => x.id === s.id);
   // "<source title> (fork)": the suffix was truncated away in the row, so a fork looked identical to its
   // source. Show a branch mark up front instead (the full title stays in the tooltip).
@@ -210,6 +216,31 @@ function Group({ g, list, forceOpen }) {
   </section>`;
 }
 
+// Team (Positions, spec 10.1): position chats that are working, waiting, or were used in the last hour, as normal
+// session rows titled with the position ("Legal", sub-line "Example Co · Answering CEO"). A sibling of Elsewhere
+// and Past that collapses like them; the people icon opens the Team view, where every position and chat is listed.
+// CEO sessions are normal sessions in their project groups. Hidden while no position chat is live or recent.
+function TeamSection({ list, forceOpen }) {
+  if (!list.length) return null;
+  const open = forceOpen || teamOpen.value;
+  const waiting = list.filter((s) => s.status === 'waiting').length;
+  const working = list.filter((s) => displayStatus(s) === 'working').length;
+  return html`<section class=${cx('sgroup sgroup-elsewhere sgroup-team', !open && 'collapsed')} aria-label="Team: position chats">
+    <div class="sgroup-head">
+      <button class="sgroup-toggle" aria-expanded=${open} onClick=${() => { if (!forceOpen) teamOpen.value = !teamOpen.value; }}
+        title="Your positions' chats that are working, waiting or were used in the last hour. Every position is in the Team view.">
+        <${Icon} name="chevron-right" size=${12} class="sgroup-chev" />
+        <span class="sgroup-name truncate">Team</span>
+        ${!open && waiting > 0 ? html`<span class="dot waiting" aria-label=${`${waiting} waiting`}></span>`
+          : html`<span class="sgroup-count tnum">${working ? `${working} working` : list.length}</span>`}
+      </button>
+      <button class="icon-btn sm sgroup-add" aria-label="Open the Team view" title=${`Team view (${mod}+Shift+T)`}
+        onClick=${() => go('team')}><${Icon} name="users" size=${14} /></button>
+    </div>
+    ${open && html`<div class="sgroup-list">${list.map((s) => html`<${SessionRow} key=${s.id} s=${s} />`)}</div>`}
+  </section>`;
+}
+
 function ArchivedGroup({ list, forceOpen }) {
   const collapsed = !forceOpen && collapsedGroups.value[ARCHIVED_KEY] !== false;   // collapsed unless opened
   const toggle = () => { collapsedGroups.value = { ...collapsedGroups.value, [ARCHIVED_KEY]: !collapsed }; };
@@ -296,6 +327,9 @@ export function Sidebar() {
     if (f || !collapsedGroups.value[g.key]) order.push(...list.map((s) => s.id));
     groups.push(html`<${Group} key=${g.key} g=${g} list=${list} forceOpen=${f} />`);
   }
+  // Team (Positions): after the project groups, before Elsewhere and Past
+  const team = f ? teamSessions.value.filter(matches) : teamSessions.value;
+  if (team.length && (f || teamOpen.value)) order.push(...team.map((s) => s.id));
   // Past (past.js) holds every inactive session and, at its bottom, the Archived group. The filter's
   // text searches Past too (forced open); the status chips hide it (nothing in Past is working,
   // waiting or errored).
@@ -316,14 +350,15 @@ export function Sidebar() {
     ${hasAny && html`<${FilterBar} />`}
     <nav class="sidebar-scroll">
       ${groups}
-      ${f && !groups.length && html`<div class="sidebar-nomatch">
+      ${f && !groups.length && !team.length && html`<div class="sidebar-nomatch">
         <p>${textQ && !chips ? 'No active sessions match.' : 'No sessions match.'}</p>
         <button class="btn btn-sm btn-ghost" onClick=${() => { sidebarQuery.value = ''; statusFilter.value = []; }}>Clear filter</button>
       </div>`}
-      ${!f && !groups.length && html`<div class="sidebar-empty">
+      ${!f && !groups.length && !team.length && html`<div class="sidebar-empty">
         <p>${hasAny ? 'No active sessions.' : 'No sessions yet.'}</p>
         <button class="btn btn-sm" onClick=${() => { newSessionOpen.value = true; }}><${Icon} name="plus" size=${14} />${hasAny ? 'New session' : 'Start one'}</button>
       </div>`}
+      <${TeamSection} list=${team} forceOpen=${f} />
       ${!f && html`<${ElsewhereSection} />`}
       ${!chips && html`<${PastSection} Row=${SessionRow} query=${textQ}
         archived=${archived.length > 0 ? html`<${ArchivedGroup} list=${archived} forceOpen=${f} />` : null} />`}

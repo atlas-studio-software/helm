@@ -48,6 +48,10 @@
 .tab.on:focus-visible { box-shadow: var(--focus-ring), var(--shadow-1); }
 .tab.unread .tab-title { color: var(--text); font-weight: 600; }
 .tab-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Positions: a position chat's company, a small chip before the title (never wider than a third of the tab) */
+.tab-co { flex: 0 1 auto; max-width: 33%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 5px; border-radius: 4px; font-size: var(--fs-2xs); line-height: 16px; color: var(--text-3);
+  background: color-mix(in srgb, var(--text) 8%, transparent); }
 .tab-fork { flex: none; color: var(--text-3); margin-right: -3px; }
 .tab-agents { flex: none; display: inline-flex; align-items: center; gap: 2px; color: var(--text-3); font-size: var(--fs-2xs); }
 .tab-x {

@@ -552,6 +552,89 @@ function Startup() {
     <${Hotkey} />`;
 }
 
+// ---- Team (Positions: docs/POSITIONS.md 2.1, 5.1, 5.2, 8.3, 9.5; PROTOCOL "Positions" > Settings) ----
+// Keys and ranges mirror TEAM_DEFAULTS / TEAM_INT in main/settings.js; main/settings.js validates every save
+// (a partial team object merges onto the current one). The team folder's problem, if any, comes from team.list.
+const TEAM_UI_DEFAULTS = { enabled: false, root: '~/helm-team', maxConcurrentRuns: 2, usageCeilingPct: 80, dutiesPaused: false, rollPct: 32, rollNowPct: 40, ownerName: '' };
+const OWNER_NAME_MAX = 40;   // main/settings.js ownerNameProblem checks the same (and no line breaks, < or >)
+const withCur = (list, v) => (list.includes(v) ? list : [...list, v].sort((a, b) => a - b));
+const RUN_CHOICES = [1, 2, 3, 4, 5, 6, 7, 8];
+const CEIL_CHOICES = [50, 60, 70, 80, 90, 100];
+const ROLL_CHOICES = [20, 25, 30, 32, 35, 40, 45, 50, 60];
+const ROLL_NOW_CHOICES = [30, 35, 40, 45, 50, 60, 70, 80];
+const errText = (e) => String((e && e.message) || e || 'Not saved').replace(/^team\.root:\s*/, '');
+// main/settings.js words a bad name as "team.ownerName ..."; here the row already says what it is
+const ownerErrText = (e) => String((e && e.message) || e || 'Not saved').replace(/^team\.ownerName\b/, 'The name');
+function NumSelect({ value, choices, label, unit = '', onPick }) {
+  return html`<select class="select" value=${String(value)} aria-label=${label} onChange=${(e) => onPick(Number(e.currentTarget.value))}>
+    ${choices.map((n) => html`<option value=${String(n)}>${n}${unit}</option>`)}
+  </select>`;
+}
+export function TeamSettings() {
+  const t = { ...TEAM_UI_DEFAULTS, ...(settings.value.team || {}) };
+  const set = (partial) => save({ team: partial }, 'Team');
+  const [root, setRoot] = useState(t.root);
+  const [rootErr, setRootErr] = useState('');
+  const [list, setList] = useState(null);
+  const [adv, setAdv] = useState(false);
+  const [owner, setOwner] = useState(t.ownerName);
+  const [ownerErr, setOwnerErr] = useState('');
+  useEffect(() => { setRoot(t.root); setRootErr(''); }, [t.root]);
+  useEffect(() => { setOwner(t.ownerName); setOwnerErr(''); }, [t.ownerName]);
+  useEffect(() => {
+    let live = true;
+    rpc('team.list', {}).then((r) => { if (live) setList(r || null); }).catch(() => { if (live) setList(null); });
+    return () => { live = false; };
+  }, [t.enabled, t.root]);
+  const saveRoot = () => {
+    const v = root.trim();
+    if (!v) { setRoot(t.root); setRootErr(''); return; }
+    if (v === t.root) { setRootErr(''); return; }
+    saveSettings({ team: { root: v } }).then(() => setRootErr('')).catch((e) => setRootErr(errText(e)));
+  };
+  // empty is fine: positions then say "the owner"
+  const saveOwner = () => {
+    const v = owner.trim();
+    if (v === t.ownerName) { setOwner(v); setOwnerErr(''); return; }
+    saveSettings({ team: { ownerName: v } }).then(() => setOwnerErr('')).catch((e) => setOwnerErr(ownerErrText(e)));
+  };
+  const problem = rootErr || (list && list.rootProblem) || '';
+  const where = list && list.root && list.root !== t.root ? list.root : '';
+  return html`
+    <${Row} label="Positions" hint="AI staff for each company, as an org tree under the CEO session. While this is off, no session gets the team tools and no duty runs.">
+      <button class="toggle" role="switch" aria-checked=${t.enabled} aria-label="Positions" data-act="team-enabled" onClick=${() => set({ enabled: !t.enabled })}></button>
+    <//>
+    <${Row} label="Team folder" hint=${html`Briefs, notebooks and logs for every company. It must be outside every git repo and every company folder.${where ? html`<span class="look-status mono truncate" title=${where}>${where}</span>` : null}${problem ? html`<span class="look-status warn" style="overflow-wrap: anywhere" role="alert" data-team-root-problem>${rootErr ? 'Not saved: ' : "Helm can't use this folder: "}${problem}</span>` : null}`}>
+      <input class="input mono" value=${root} spellcheck="false" aria-label="Team folder" aria-invalid=${problem ? 'true' : undefined} data-act="team-root"
+        onInput=${(e) => setRoot(e.currentTarget.value)} onBlur=${saveRoot}
+        onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setRoot(t.root); setRootErr(''); } }} />
+    <//>
+    <${Row} label="Your name" hint=${html`How positions refer to you. Empty means "the owner". At most ${OWNER_NAME_MAX} characters.${ownerErr ? html`<span class="look-status warn" style="overflow-wrap: anywhere" role="alert" data-team-owner-problem>Not saved: ${ownerErr}</span>` : null}`}>
+      <input class="input" value=${owner} maxLength=${OWNER_NAME_MAX} spellcheck="false" placeholder="the owner" aria-label="Your name" aria-invalid=${ownerErr ? 'true' : undefined} data-act="team-owner-name"
+        onInput=${(e) => setOwner(e.currentTarget.value)} onBlur=${saveOwner}
+        onKeyDown=${(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setOwner(t.ownerName); setOwnerErr(''); } }} />
+    <//>
+    <${Row} label="Pause all duties" hint="Stops every scheduled and event duty in every company. Asks still work.">
+      <button class="toggle" role="switch" aria-checked=${t.dutiesPaused} aria-label="Pause all duties" data-act="team-paused" onClick=${() => set({ dutiesPaused: !t.dutiesPaused })}></button>
+    <//>
+    <${Row} label="Duties wait at usage" hint=${`Duties wait while your 5-hour usage is at or above this. Default ${TEAM_UI_DEFAULTS.usageCeilingPct}%.`}>
+      <${NumSelect} value=${t.usageCeilingPct} choices=${withCur(CEIL_CHOICES, t.usageCeilingPct)} unit="%" label="Duties wait at usage" onPick=${(n) => set({ usageCeilingPct: n })} />
+    <//>
+    <${Row} label="Position replies at once" hint="Across all companies, asks and duties. Each one runs its own Claude Code process (about 300 to 450 MB).">
+      <${NumSelect} value=${t.maxConcurrentRuns} choices=${withCur(RUN_CHOICES, t.maxConcurrentRuns)} label="Position replies at once" onPick=${(n) => set({ maxConcurrentRuns: n })} />
+    <//>
+    <${Row} label="Advanced" hint="When a position's chat moves to a fresh one.">
+      <button type="button" class="btn btn-ghost btn-sm" aria-expanded=${adv} data-act="team-advanced" onClick=${() => setAdv(!adv)}><${Icon} name=${adv ? 'chevron-up' : 'chevron-down'} size=${14} />${adv ? 'Hide' : 'Show'}</button>
+    <//>
+    ${adv && html`
+      <${Row} label="Fresh chat at its next quiet moment" hint=${`From this much of the context window, the chat moves to a fresh one (with a handoff) once it has nothing running. Default ${TEAM_UI_DEFAULTS.rollPct}%.`}>
+        <${NumSelect} value=${t.rollPct} choices=${withCur(ROLL_CHOICES, t.rollPct).filter((n) => n < t.rollNowPct)} unit="%" label="Fresh chat at its next quiet moment" onPick=${(n) => set({ rollPct: n })} />
+      <//>
+      <${Row} label="Fresh chat as soon as the turn ends" hint=${`From this much, it moves right after the current turn. Must be above the first. Default ${TEAM_UI_DEFAULTS.rollNowPct}%.`}>
+        <${NumSelect} value=${t.rollNowPct} choices=${withCur(ROLL_NOW_CHOICES, t.rollNowPct).filter((n) => n > t.rollPct)} unit="%" label="Fresh chat as soon as the turn ends" onPick=${(n) => set({ rollNowPct: n })} />
+      <//>`}`;
+}
+
 function Snippets() {
   const list = settings.value.snippets || [];
   const [editing, setEditing] = useState(null);   // { id, name, text } | null
@@ -628,6 +711,7 @@ export function SettingsView() {
         <${Section} id="account" title="Account" desc="How Helm's sessions reach Claude: Claude Code's own sign-in, or an API key you add here."><${AccountSettings} /><//>
         <${Section} id="appearance" title="Appearance"><${Backgrounds} /><${Accent} /><${Theme} /><${LookSyncRow} /><//>
         <${Section} id="defaults" title="New session defaults"><${Defaults} /><//>
+        <${Section} id="team" title="Team" desc="Positions: AI staff for each company. Duties, the team folder and limits."><${TeamSettings} /><//>
         <${Section} id="guard" title="Safety" desc="Checks that apply to every session, whatever its permission mode."><${ProdGuard} /><//>
         ${!(isPhone.value && appInfo.value.platform !== 'electron') && html`<${Section} id="startup" title="Startup & shortcuts"><${Startup} /><//>`}
         <${Section} id="notify" title="Notifications"><${Notifications} /><//>

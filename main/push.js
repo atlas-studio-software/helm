@@ -11,6 +11,9 @@
 //    visible (it reports itself with `phone.visible`; ui/shell/phone.js), since it has its own in-page cue.
 //    Agent context hand-off alerts (source "context", 32% / 40%; main/notify.js onContextAlert) push too, gated
 //    by their own switch (settings.notifyContextHandoff) instead of notifications[kind].
+//    Team notices (source "team": a position's access card, a proposal, a duty run) are plain `waiting` pushes,
+//    titled by main/notify.js normalizeNotice; one with no session gets a topic + tag per company and what, so a
+//    newer duty push replaces the last one instead of stacking, and carries { view: 'team', company } for the click.
 //  - expired subscriptions (404 / 410 from the push service) are dropped; other failures are kept with the
 //    reason, shown in Settings, Phone
 // Owner: lane https.
@@ -18,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { writeFileAtomic, readJson } = require('./atomic');
+const { normalizeNotice } = require('./notify'); // pure: the same team-notice titles as the desktop toast
 
 const PUSH_KINDS = new Set(['waiting', 'done', 'error']);
 const VISIBLE_MS = 150_000; // a "visible" report counts this long (the page repeats it every 60 s while visible)
@@ -25,10 +29,12 @@ const MAX_SUBS = 10;
 
 const subId = (endpoint) => crypto.createHash('sha256').update(String(endpoint)).digest('hex').slice(0, 12);
 const hostOf = (endpoint) => { try { return new URL(endpoint).host; } catch { return 'unknown'; } };
+const safeKey = (s) => String(s).replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 40);
 const short = (s, n = 160) => String(s || '').replace(/https?:\/\/\S+/g, '[url]').replace(/\s+/g, ' ').trim().slice(0, n);
 
 // Pure policy (exported for tests): should this notify event go to the phone? -> { send, reason }
 function pushDecision(n, { prefs = {}, windowFocused = false, phoneVisible = false, subscribers = 0 } = {}) {
+  n = normalizeNotice(n); // a team notice with an empty title still goes, as "Team needs you"
   if (!n || !n.title) return { send: false, reason: 'no title' };
   const ctx = n.source === 'context';   // agent context hand-off (32% / 40%): its own switch, notifyContextHandoff, already applied
   if (!PUSH_KINDS.has(n.kind)) return { send: false, reason: `"${n.kind || 'plain'}" notices stay on the desktop` };
@@ -138,7 +144,7 @@ function createPush({ dir, webpush = null, loadError = null, getSubject = () => 
     };
   }
 
-  // payload: { title, body, sessionId?, kind?, tag? } -> { sent, failed, removed, results: [{ id, ok, status?, error? }] }
+  // payload: { title, body, sessionId?, kind?, tag?, view?, company? }  (view 'team' + company: a team notice) -> { sent, failed, removed, results: [{ id, ok, status?, error? }] }
   async function send(payload, { ttl = 3600, urgency = 'normal', topic = null } = {}) {
     if (!webpush) return { sent: 0, failed: 0, removed: 0, results: [], error: `Push is unavailable: ${loadError || 'web-push missing'}` };
     const list = load().slice();
@@ -185,14 +191,20 @@ function createPush({ dir, webpush = null, loadError = null, getSubject = () => 
 
   // A host `notify` event -> maybe one push. ctx: { prefs, windowFocused }.
   async function notify(n, ctx = {}) {
+    n = normalizeNotice(n);
     const d = pushDecision(n, { ...ctx, phoneVisible: phoneVisible(), subscribers: webpush ? load().length : 0 });
     if (!d.send) { if (subs && subs.length) lastSend = { at: now(), kind: n && n.kind, skipped: true, reason: d.reason }; return { sent: 0, skipped: d.reason }; }
     // A context alert gets its own topic + tag per agent, so it never replaces the session's "needs you" push (and
     // that agent's 40% alert replaces its 32% one).
     const ctxKey = n.source === 'context' && n.agentId ? `ctx-${n.agentId}` : '';
-    const topic = n.sessionId ? crypto.createHash('sha256').update(`${n.sessionId}:${ctxKey || n.kind}`).digest('base64url').slice(0, 32) : null;
-    const tag = n.sessionId ? `helm-${n.sessionId}${ctxKey ? `-${ctxKey}` : ''}` : 'helm';
-    const r = await send({ title: String(n.title).slice(0, 120), body: String(n.body || '').slice(0, 400), sessionId: n.sessionId || null, kind: n.kind, tag },
+    // A team notice with no session: one topic + tag per company and what (a newer duty push replaces the last).
+    const team = n.source === 'team' ? (n.team && typeof n.team === 'object' ? n.team : {}) : null;
+    const teamKey = team && !n.sessionId ? `team-${safeKey(team.company || 'any')}-${safeKey(team.what || n.kind)}` : '';
+    const hash = (s) => crypto.createHash('sha256').update(s).digest('base64url').slice(0, 32);
+    const topic = n.sessionId ? hash(`${n.sessionId}:${ctxKey || n.kind}`) : teamKey ? hash(teamKey) : null;
+    const tag = n.sessionId ? `helm-${n.sessionId}${ctxKey ? `-${ctxKey}` : ''}` : teamKey ? `helm-${teamKey}` : 'helm';
+    const r = await send({ title: String(n.title).slice(0, 120), body: String(n.body || '').slice(0, 400), sessionId: n.sessionId || null, kind: n.kind, tag,
+      ...(team ? { view: 'team', company: team.company || null } : {}) },
       { urgency: n.kind === 'done' ? 'normal' : 'high', topic, ttl: n.kind === 'done' ? 3600 : 6 * 3600 });
     lastSend = { at: now(), kind: n.kind, sent: r.sent, failed: r.failed, removed: r.removed };
     return r;

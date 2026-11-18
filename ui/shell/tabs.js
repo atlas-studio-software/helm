@@ -25,6 +25,7 @@ import { STORAGE_KEY, parse, serialize, openTab, neighborOf, prune, cycle, tabFo
 import { view, isPhone, openSession, newSessionOpen, goHome } from './state.js';
 import { split, closePane, shownPaneIds, provideTabs, dragSession, dropOver, dropOnPane } from './split.js';
 import { cx, mod } from './util.js';
+import { positionCompany } from './position-meta.js';
 
 function load() { try { return parse(localStorage.getItem(STORAGE_KEY)); } catch { return null; } }
 const saved0 = load();                       // null = tabs never used here: the default startup pick becomes tab 1
@@ -409,6 +410,7 @@ function Tab({ s, on, beside, lifted, onDown }) {
   const ds = displayStatus(s);
   const agents = agentsRunningOf(s);
   const fork = / \(fork\)$/.test(s.title || '');
+  const co = positionCompany(s);   // Positions: a position chat's tab names its company
   const title = (fork ? s.title.replace(/( \(fork\))+$/, '') : s.title) || 'New session';
   const state = isAgentsOnly(s) ? agentsLabel(s) : (STATUS_TEXT[ds] || ds) + (agents ? ` · ${agentsLabel(agents)}` : '');
   const close = (e) => { e.stopPropagation(); e.preventDefault(); closeTabById(s.id); };
@@ -422,6 +424,7 @@ function Tab({ s, on, beside, lifted, onDown }) {
       onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(s.id); } else if (e.key === 'Delete') close(e); }}>
     <span class=${cx('dot', ds, ds === 'working' && 'live')} aria-label=${state}></span>
     ${fork && html`<${Icon} name="git-branch" size=${11} class="tab-fork" />`}
+    ${co && html`<span class="tab-co" title=${`Company: ${co}`}>${co}</span>`}
     <span class="tab-title">${title}</span>
     ${agents > 0 && html`<span class="tab-agents tnum" aria-label=${agentsLabel(agents)}><${Icon} name="bot" size=${11} />${agents}</span>`}
     <button class="tab-x" tabindex="-1" aria-label=${`Close tab: ${title}`} onPointerDown=${(e) => e.stopPropagation()} onClick=${close}><${Icon} name="x" size=${12} /></button>

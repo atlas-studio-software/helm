@@ -461,7 +461,7 @@
 /* ---------- overlays: pill, show earlier, empty, lightbox ---------- */
 .chat-pill {
   position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 3;
-  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; border-radius: var(--radius-pill);
+  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; border-radius: var(--radius-pill); white-space: nowrap;
   border: 1px solid var(--hairline-strong); background: var(--overlay); color: var(--text); font-size: var(--fs-s); cursor: pointer;
   box-shadow: var(--elev-tip); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
 }
@@ -693,3 +693,184 @@ html[data-theme="light"] .hljs-meta { color: #5f6673; }
 .rn-hint { flex: 1 1 220px; min-width: 0; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.4; }
 @media (hover: hover) { .rn-link:hover { text-decoration: underline; } }
 @media (max-width: 480px) { .restart-note { padding: 12px; } .rn-hint { flex-basis: 100%; } .rn-tag { display: none; } }
+
+/* ---- Positions: team cards (ui/chat/team-cards.js) and the access card (requests.js), docs/POSITIONS.md 10.4 ----
+   Every card is the request card (.req-card). A status card (Ask) takes the working colour; a card that needs the owner
+   (proposal, access, waiting for his OK) takes the waiting colour, as a permission card does. */
+.tc-ask { gap: 10px; }
+.tc-ask .req-head > .icon, .tc-answer-card .req-head > .icon { color: var(--st-working); }
+.tc-ask.is-waiting .req-head > .icon { color: var(--st-waiting); }
+.tc-tag { display: inline-block; margin-left: 7px; padding: 0 7px; border: 1px solid var(--hairline); border-radius: var(--radius-pill); font-size: var(--fs-2xs); line-height: 17px; color: var(--text-2); font-weight: 500; vertical-align: 1px; }
+.tc-q { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tc-time { font-variant-numeric: tabular-nums; }
+.tc-state { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--fs-s); color: var(--text); }
+.tc-state > .dot { margin-left: 4px; }
+.tc-state-text { min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.tc-state.tone-waiting .tc-state-text { color: var(--warn); }
+.tc-state.tone-idle .tc-state-text { color: var(--text-2); }
+.tc-sub, .tc-hint { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.4; margin-top: -4px; overflow-wrap: anywhere; }
+/* the chain: one indented line per sub-ask, an elbow back to the one that asked */
+.tc-chain { list-style: none; margin: 0; padding: 6px 0 0; display: flex; flex-direction: column; gap: 1px; border-top: 1px solid var(--hairline); }
+.tc-step { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 24px; padding: 2px 2px 2px calc(var(--d, 0) * 16px + 4px); font-size: var(--fs-s); }
+.tc-step.kid::before { content: ""; position: absolute; left: calc((var(--d, 1) - 1) * 16px + 7px); top: -3px; height: calc(50% + 3px); width: 9px; border-left: 1px solid var(--hairline-strong); border-bottom: 1px solid var(--hairline-strong); border-bottom-left-radius: 4px; pointer-events: none; }
+.tc-step-name { flex: 0 1 auto; min-width: 0; max-width: 55%; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-step-state { flex: 1 1 0; min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.tc-step.s-access .tc-step-state { color: var(--warn); }
+.tc-step:is(.s-answered, .s-cancelled) .tc-step-state { color: var(--text-3); }
+.tc-step:is(.s-refused, .s-expired) .tc-step-state { color: var(--danger); }
+.tc-step-more { display: none; color: var(--text-3); }
+.tc-step.deep-d .tc-step-more { display: inline; }
+.tc-ask .tc-step { --m-rise: 4px; animation: m-in-rise var(--m-dur-xs) var(--m-spring) both, m-in-fade calc(var(--m-dur-xs) * 0.4) var(--m-fade-in) both; }
+/* settled: one line, the answer (and the chain) under a disclosure. A grid, not a row: icon | words | peek | chevron,
+   and a quoted reason gets its own clamped line under the words instead of a cramped second column.
+   Every record (button or not) has the same 6px inset so icons line up, and none is wider than the column. */
+.tc-rec-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.req-record.tc-rec {
+  display: grid; grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr) auto; column-gap: 8px; row-gap: 1px;
+  align-items: center; align-content: center; width: 100%; padding: 3px 6px;
+}
+.tc-rec > .icon { grid-area: 1 / 1; }
+.tc-rec > .tc-rec-text { grid-area: 1 / 2; }
+.tc-rec > .tc-rec-note { grid-area: 2 / 2 / auto / 4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tc-rec > :is(.tc-peek, .grow) { grid-area: 1 / 3; }
+.tc-rec > .trow-chev { grid-area: 1 / 4; }
+.tc-rec-btn {
+  appearance: none; border: 0; background: none; text-align: left; cursor: pointer;
+  margin: 0; border-radius: var(--radius-s); transition: background-color var(--dur) var(--ease);
+}
+@media (hover: hover) { .tc-rec-btn:hover { background: var(--surface-2); } .tc-rec-btn:hover .tc-peek { color: var(--text-2); } }
+.tc-rec-btn:active { background: var(--surface-3); }
+.tc-rec-meta { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tc-peek { min-width: 0; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.tc-rec-btn, .tc-seed-line, .tc-disc)[aria-expanded="true"] .trow-chev { transform: rotate(90deg); }
+.tc-reveal { display: flex; flex-direction: column; gap: 10px; min-width: 0; margin-left: 6px; padding: 2px 0 4px 14px; border-left: 1px solid var(--hairline-strong); animation: m-in-fade var(--m-dur-xs) var(--m-fade-in) both; }
+.tc-answer { min-width: 0; font-size: var(--fs-s); color: var(--text); overflow-wrap: anywhere; }
+.tc-answer .md { font-size: var(--fs-s); }
+.tc-q-full { color: var(--text-2); font-size: var(--fs-s); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tc-label { display: block; margin-bottom: 2px; font-size: var(--fs-2xs); color: var(--text-3); }
+.tc-rec.fresh > .tc-done-ic { animation: msg-act-done var(--m-dur-xs) var(--m-spring) both, m-in-fade calc(var(--m-dur-xs) * 0.4) var(--m-fade-in) both; }
+.tc-answer-card > .tc-answer { padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-m); background: var(--surface-1); max-height: 420px; overflow: auto; }
+/* asked-by: the answerer's chat. Left-aligned, labelled, the mirror of the owner's bubble (never their right-hand one) */
+.msg-ask { align-self: flex-start; max-width: min(88%, 680px); min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 6px; }
+.ask-from { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; min-width: 0; color: var(--text-2); font-size: var(--fs-xs); font-weight: 500; }
+.ask-from > .icon { color: var(--st-working); }
+.msg-ask.o-duty .ask-from > .icon { color: var(--text-3); }
+.msg-ask.o-answer .ask-from > .icon { color: var(--ok); }
+.ask-who { color: var(--text); overflow-wrap: anywhere; }
+.ask-sub { color: var(--text-3); font-weight: 400; overflow-wrap: anywhere; }
+.ask-bubble {
+  max-width: 100%; min-width: 0; box-sizing: border-box; padding: 9px 14px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--radius-s) var(--radius-l) var(--radius-l) var(--radius-l);
+  box-shadow: 0 1px 0 var(--hairline-inner) inset;
+}
+.ask-bubble.md-body { white-space: normal; }
+.ask-bubble.clamp { max-height: 15.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+.ask-more { appearance: none; border: 0; background: none; margin: -2px 0 0 8px; padding: 2px 6px; border-radius: var(--radius-xs); color: var(--accent); font-size: var(--fs-xs); cursor: pointer; }
+@media (hover: hover) { .ask-more:hover { text-decoration: underline; } }
+.ask-files { justify-content: flex-start; }
+.msg-ask:hover .msg-meta { opacity: 1; }
+.ask-meta { gap: 6px; }
+/* the seed line of a fresh chat */
+.tc-seed { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.tc-seed-line { appearance: none; border: 0; background: none; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 24px; padding: 2px 10px; border-radius: var(--radius-pill); color: var(--text-3); font-size: var(--fs-xs); cursor: pointer; }
+.tc-seed-line > span:not(.trow-chev) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) { .tc-seed-line:hover { background: var(--surface-2); color: var(--text-2); } }
+.tc-seed-text { align-self: stretch; max-height: 320px; overflow: auto; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-m); background: var(--surface-2); color: var(--text-2); font-family: var(--mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tc-notice { white-space: normal; text-wrap: balance; }
+.tc-notice > .icon { color: var(--text-3); }
+/* proposal: label | value rows */
+.tc-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 0; font-size: var(--fs-s); }
+.tc-facts dt { color: var(--text-3); font-size: var(--fs-xs); line-height: 24px; white-space: nowrap; }
+.tc-facts dd { margin: 0; min-width: 0; align-self: center; color: var(--text); line-height: 1.5; overflow-wrap: anywhere; }
+.tc-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.tc-chips .chip { display: inline-block; line-height: 22px; overflow: hidden; text-overflow: ellipsis; }
+.tc-chips .att-file { height: 26px; }
+.chip.tc-mono { font-family: var(--mono); font-weight: var(--mono-w); font-size: var(--fs-2xs); }
+.chip.tc-removed { color: var(--text-3); text-decoration: line-through; }
+.tc-lines { display: flex; flex-direction: column; gap: 2px; }
+.tc-add { color: var(--diff-add-text); }
+.tc-del { color: var(--diff-del-text); }
+.tc-change { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.tc-old, .tc-arrow { color: var(--text-3); }
+.tc-clip { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text-2); }
+.tc-disc { appearance: none; border: 0; background: none; display: inline-flex; align-items: center; gap: 4px; min-height: 24px; margin-left: -4px; padding: 2px 8px 2px 4px; border-radius: var(--radius-xs); color: var(--accent); font-size: var(--fs-s); cursor: pointer; }
+@media (hover: hover) { .tc-disc:hover { background: var(--surface-3); } }
+.tc-disc .trow-chev { color: inherit; }
+.tc-facts .dv { margin-top: 8px; }
+.tc-brief { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--radius-m); background: var(--surface-1); max-height: 360px; overflow: auto; animation: m-in-fade var(--m-dur-xs) var(--m-fade-in) both; }
+.tc-change-box .textarea { display: block; width: 100%; box-sizing: border-box; }
+/* proposal: the powers its managers lack (cut on approval), one row each with who cuts it */
+.tc-excess-head { color: var(--text); font-weight: 600; }
+.tc-cut { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.tc-cut > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; min-width: 0; }
+.tc-cut-what { color: var(--danger); font-weight: 500; text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--danger) 55%, transparent); overflow-wrap: anywhere; }
+.tc-cut-what.tc-mono { font-family: var(--mono); font-weight: var(--mono-w); font-size: var(--fs-xs); }
+.tc-cut-why { color: var(--text-2); overflow-wrap: anywhere; }
+.tc-cut-why::before { content: "· "; color: var(--text-3); }
+.tc-prop .tc-chips .chip.danger { text-decoration: line-through; }
+.tc-chg { color: var(--text-2); }
+.tc-none { color: var(--text-3); }
+.tc-counts { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tc-counts-line { display: block; font-size: var(--fs-xs); line-height: 24px; }
+/* the brief as a line diff: + / − lines tinted, folded runs of unchanged lines */
+.tc-bdiff { margin-top: 4px; max-height: 360px; overflow: auto; border: 1px solid var(--hairline); border-radius: var(--radius-m); background: var(--surface-1); font-family: var(--mono); font-weight: var(--mono-w); font-size: var(--fs-xs); line-height: 1.55; }
+.tc-bd { display: flex; gap: 8px; min-width: 0; padding: 0 10px 0 6px; }
+.tc-bd-sign { flex: 0 0 auto; width: 1ch; color: var(--text-3); user-select: none; }
+.tc-bd-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
+.tc-bd.add { background: var(--diff-add-bg); }
+.tc-bd.add > * { color: var(--diff-add-text); }
+.tc-bd.del { background: var(--diff-del-bg); }
+.tc-bd.del > * { color: var(--diff-del-text); }
+.tc-bd.gap { padding: 1px 10px; color: var(--text-3); font-family: var(--font); font-style: italic; background: var(--surface-2); }
+/* ask: [Let it answer now] */
+.tc-actions > .tc-release { flex: 0 0 auto; }
+/* a seed line above a fresh chat's first bubble (static: nothing to open) */
+.tc-seed-note { align-self: stretch; }
+.tc-seed-line.is-static { cursor: default; }
+/* the static note has no disclosure holding the rest, so it wraps (centred) rather than cutting "…the previous chat wrote" */
+.tc-seed-line.is-static > span:not(.trow-chev) { white-space: normal; overflow-wrap: anywhere; text-align: center; }
+.tc-seed-line.is-static > svg { flex: none; }
+@media (hover: hover) { .tc-seed-line.is-static:hover { background: none; color: var(--text-3); } }
+.access-once-only { color: var(--text-2); }
+/* decision rows. Proposal: Approve, Change..., Decline on one line, the decline note full width under them.
+   Access: the approvals on one line (Approve always may be long and wrap), the note beside Deny on the next. */
+.tc-actions > .tc-note-line { flex: 1 1 100%; width: auto; }
+.tc-decide { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tc-deny-row > .req-reason { flex: 1 1 140px; width: auto; }
+/* access: "Approve always (also widens Legal)" may wrap; the scope words say what each button does */
+.access-always { height: auto; min-height: 30px; padding-top: 5px; padding-bottom: 5px; white-space: normal; line-height: 1.25; text-align: center; }
+.access-scope { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: -4px; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
+.access-scope strong { color: var(--text-2); font-weight: 500; }
+.access-warn { display: inline-flex; align-items: flex-start; gap: 5px; color: var(--warn); }
+.access-warn > .icon { margin-top: 2px; }
+:where(.chat) .tc-seed-line:focus-visible { border-radius: var(--radius-pill); }
+:where(.chat) :is(.tc-disc, .ask-more):focus-visible { border-radius: var(--radius-xs); }
+@media (max-width: 820px) {
+  .tc-step { min-height: 30px; padding-left: calc(min(var(--d, 0), 3) * 12px + 4px); }
+  .tc-step.kid::before { left: calc((min(var(--d, 1), 3) - 1) * 12px + 7px); width: 7px; }
+  .tc-step.deep-p .tc-step-more { display: inline; }
+  .msg-ask { max-width: 94%; }
+  .tc-actions .btn { flex: 1 1 auto; }
+  .tc-actions > .grow { display: none; }
+  .tc-deny-row > .btn { flex: 0 0 auto; }
+}
+/* touch: every control on these cards gets a 44 px target (the card buttons are .btn.sm / 30-40 px elsewhere) */
+@media (max-width: 820px), (pointer: coarse) {
+  .tc-rec-btn, .tc-seed-line:not(.is-static), .tc-disc, .ask-more { min-height: var(--tap); }
+  :is(.tc-card, .access-card) .req-actions .btn, .access-card .access-always { min-height: var(--tap); }
+  :is(.tc-card, .access-card) .req-actions .input { min-height: var(--tap); }
+}
+@media (max-width: 480px) {
+  .tc-facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .tc-facts dt { line-height: 1.4; margin-top: 8px; }
+  .tc-facts dt:first-child { margin-top: 0; }
+}
+@media (max-width: 393px) {
+  .req-actions .access-always { flex: 1 1 100%; }
+  .access-scope { flex-direction: column; }
+}
+/* Approve, Change... and Decline need about 250px; below 360 the primary takes its own line, the other two split the next */
+@media (max-width: 360px) { .tc-actions > [data-act="proposal-approve"] { flex: 1 1 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .tc-ask .tc-step, .tc-reveal, .tc-brief, .tc-rec.fresh > .tc-done-ic { animation: none; }
+}

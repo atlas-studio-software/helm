@@ -28,6 +28,52 @@
 .cmp-card.is-drag { border-color: var(--accent-line); border-style: dashed; }
 .cmp-card.is-disabled { opacity: 0.6; }
 
+/* Positions: an ended position chat (session.position.ended) shows this quiet bar instead of the card.
+   One line at desktop widths; on a narrow phone the text and the link wrap, centred, never overflow. */
+.cmp-ended {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 6px;
+  min-width: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-l);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-s);
+  line-height: 1.4;
+  text-align: center;
+}
+.cmp-ended-text { min-width: 0; overflow-wrap: anywhere; }
+.cmp-ended-sep { color: var(--text-3); }
+.cmp-ended-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  min-width: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+@media (hover: hover) { .cmp-ended-link:hover:not(:disabled) { text-decoration-color: var(--accent); } }
+.cmp-ended-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.cmp-ended-link:disabled { opacity: 0.6; cursor: default; }
+@media (max-width: 820px), (pointer: coarse) {
+  .cmp-ended { padding: 4px 12px; }
+  .cmp-ended-link { min-height: var(--tap); }
+}
+
 .cmp-drop {
   position: absolute;
   inset: 0;

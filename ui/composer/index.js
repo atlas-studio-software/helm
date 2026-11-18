@@ -18,6 +18,7 @@ import { Bar } from './bar.js';
 import { AutoMenu } from './menu.js';
 import { useVoice, VoiceStatus } from './voice.js';
 import { AuthNotice } from '../shell/auth-notice.js';   // lane opensource-auth: no API key = say so here
+import { openSession } from '../shell/state.js';        // Positions: the ended-chat bar opens the current chat
 import {
   isPhone, isTouch, loadDraft, saveDraft, loadHistory, pushHistory, readDataUrl, fmtBytes, uid,
   getCommands, filterCommands, normFile, detectToken,
@@ -32,9 +33,67 @@ const splitDraft = (d) => (typeof d === 'string' && d.startsWith('!') ? { shell:
 const folderName = (s) => s?.project || String(s?.cwd || '').split(/[\\/]/).filter(Boolean).pop() || 'this folder';
 const desktop = () => !isTouch() && !isPhone.value;
 
+const sessionFor = (forSid) => (forSid ? sessions.value.find((x) => x.id === forSid) || null : activeSession.value);
+
+// Positions: the position's current chat = the loaded session of the same position (company + id) that has not
+// ended, highest chat number; null when none is loaded.
+export function currentChatOf(pos, list = sessions.value) {
+  if (!pos) return null;
+  let best = null;
+  for (const x of list || []) {
+    const p = x?.position;
+    if (!p || p.ended || p.company !== pos.company || p.id !== pos.id) continue;
+    if (!best || (Number(p.chat) || 0) > (Number(best.position.chat) || 0)) best = x;
+  }
+  return best;
+}
+
 // `sid`: the session this composer sends to (split view renders one per pane); default = the active session.
-export function Composer({ sid: forSid = null } = {}) {
-  const s = forSid ? sessions.value.find((x) => x.id === forSid) || null : activeSession.value;
+// An ended position chat (docs/PROTOCOL.md "Session fields": position.ended) gets no box at all, only a bar that
+// opens the position's current chat: nothing can be typed, no draft is written, and the window events
+// ('helm:composer-insert' / -attach / -focus) have no listener for it. Normal sessions keep one LiveComposer
+// instance across session switches, exactly as before.
+export function Composer({ sid = null } = {}) {
+  const s = sessionFor(sid);
+  if (s?.position?.ended) return html`<${EndedChat} s=${s} />`;
+  return html`<${LiveComposer} sid=${sid} />`;
+}
+
+function EndedChat({ s }) {
+  const pos = s.position;
+  const cur = currentChatOf(pos);
+  const [busy, setBusy] = useState(false);
+  const n = cur ? cur.position.chat : null;
+  const label = n != null ? `continue in chat ${n}` : 'continue in the current chat';
+  const open = async () => {
+    if (cur) { openSession(cur.id); return; }
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await rpc('team.open', { company: pos.company, id: pos.id });
+      if (!r?.sessionId) throw new Error('No chat came back for this position.');
+      openSession(r.sessionId);
+    } catch (e) {
+      toast({ title: 'Could not open the chat', error: e, kind: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const who = pos.name ? ` with ${pos.name}` : '';
+  return html`<div class="cmp" data-session=${s.id}>
+    <div class="cmp-col">
+      <div class="cmp-ended" role="status" data-state="ended">
+        <span class="cmp-ended-text">This chat has ended</span>
+        <span class="cmp-ended-sep" aria-hidden="true">·</span>
+        <button type="button" class="cmp-ended-link" data-act="cmp-ended-open" disabled=${busy} aria-busy=${busy ? 'true' : undefined}
+          aria-label=${(n != null ? `Continue in chat ${n}` : 'Continue in the current chat') + who} onClick=${open}>${label}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function LiveComposer({ sid: forSid = null } = {}) {
+  const s = sessionFor(forSid);
   const id = s?.id || null;
   const working = s?.status === 'working';
 

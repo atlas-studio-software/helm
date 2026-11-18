@@ -98,6 +98,9 @@ function createExternalTracker({
   now = Date.now,
   readPage,
   tempDir,
+  // Positions (T9): () => [absolute folders] read live on every scan (the team root is a setting). Sessions whose
+  // cwd is at or under one are left out of the external list.
+  excludeDirs = null,
   ...over
 } = {}) {
   const dir = projectsDir || require('./transcript').projectsDir();
@@ -216,6 +219,7 @@ function createExternalTracker({
 
     const out = [];
     let idle = 0;
+    const excluded = history.readDirs(excludeDirs);
     for (const e of recent) {
       if (!e.active && idle >= opts.idleLimit) break;
       const s = await summaryOf(e);
@@ -224,6 +228,7 @@ function createExternalTracker({
       if (!s && !e.active) continue;
       const cwd = (s && s.cwd) || null;
       if (cwd && history.isTempCwd(cwd, tempDir)) continue;
+      if (cwd && excluded.length && history.isUnderAny(cwd, excluded)) continue;
       const slug = path.basename(path.dirname(e.file));
       const label = snap && snap.label ? snap.label : '';
       out.push({

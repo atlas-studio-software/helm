@@ -19,12 +19,13 @@ const { PushStream, rid, baseName, oneLine, truncate, titleFromPrompt, contextFr
 const shellRun = require('./shell-run');
 const prodGuard = require('./prod-guard');
 const steer = require('./steer'); // lane steer: mid-turn messages + explicit Stop
+const { teamEvent } = require('./team/notice'); // Positions: the team notice shape (teamNotice titles)
 const { RESUME_PROMPT } = require('../../ui/lib/stall-limits.js'); // lane restart: Continue sends the same words as stall Resume
 
 const { keepCompat, reinitProblem } = require('./keep-compat'); // lane detach: may a relaunched Helm re-attach to a kept CLI
 const { TaskLog } = require('./task-log'); // lane logs: task_* / background_tasks_changed log lines (summary at info, JSON at debug)
 
-const PUBLIC_FIELDS = ['id', 'claudeSessionId', 'title', 'cwd', 'project', 'status', 'model', 'effort', 'permissionMode', 'createdAt', 'updatedAt', 'costUsd', 'context', 'activity', 'turnStartedAt', 'unread', 'queued', 'pinned', 'eta', 'archived', 'lastText', 'resumedAt', 'restartNote'];
+const PUBLIC_FIELDS = ['id', 'claudeSessionId', 'title', 'cwd', 'project', 'status', 'model', 'effort', 'permissionMode', 'createdAt', 'updatedAt', 'costUsd', 'context', 'activity', 'turnStartedAt', 'unread', 'queued', 'pinned', 'eta', 'archived', 'lastText', 'resumedAt', 'restartNote', 'position', 'team'];
 // lane restart: Session.restartNote = { at, cause: 'restart'|'quit', working, waiting, agents: [{ id, agentId, name }],
 // tasks: [{ type, description }], shells, queued } — what the last Helm shutdown cut off (docs/PROTOCOL.md
 // "Restart note"). Kept at most this long if the user never acts on it.
@@ -167,6 +168,19 @@ function validRewind(r) {
   return validUuid(r.firstNew) && validMarkers(r.markers);
 }
 
+// Positions: the PROTOCOL user-item fields a Helm-sent team message carries (origin + ask | duty | answer | seed).
+const TEAM_ORIGINS = new Set(['ask', 'duty', 'answer', 'seed']);
+function teamFields(team, seed) {
+  const out = {};
+  if (team && typeof team === 'object' && TEAM_ORIGINS.has(team.origin)) {
+    out.origin = team.origin;
+    for (const k of ['ask', 'duty', 'answer', 'seed']) if (team[k] && typeof team[k] === 'object') out[k] = team[k];
+  }
+  if (seed && !out.seed) out.seed = { handoff: /handoff your previous chat wrote/.test(seed), seeded: true };
+  return out;
+}
+const SEED_BLOCK_RE = /^\s*<position-seed>[\s\S]*?<\/position-seed>\s*/;
+
 function describeTool(it) {
   const i = it.input || {};
   const n = it.name || '';
@@ -237,6 +251,8 @@ class EngineSession {
     if (data.restartNote) this.stopNote = { cause: 'restart', cut: data.restartNote };
     this.turnAnchor = null; // uuid of the current turn's last main-thread message (see _recordResult)
     this.requests = new Map(); // requestId → { resolve, item, input, kind, toolUseId, opts }
+    this.helmNotes = []; // Positions: <helm-note> texts that ride on the next message (decisions, roster changes, brief edits)
+    this.teamAttached = null; // Positions: 'ceo' | 'position' when this CLI runs with the team server (team/wire.js)
     this.allowAlways = new Set();
     this.running = []; // tool item ids, start order
     this.streamingKind = null;
@@ -721,7 +737,7 @@ class EngineSession {
     const pend = [...this.requests.values()].filter((r) => r.item.status === 'pending');
     if (pend.length) {
       const r = pend[0];
-      a = r.kind === 'question' ? 'Waiting for your answer' : r.kind === 'plan' ? 'Waiting for plan approval' : r.item.guard ? `Waiting for your OK: ${r.item.title}` : `Waiting for permission: ${r.item.toolName}`;
+      a = r.kind === 'question' ? 'Waiting for your answer' : r.kind === 'plan' ? 'Waiting for plan approval' : r.item.access ? `Waiting for your OK: ${r.item.title || 'access request'}` : r.item.guard ? `Waiting for your OK: ${r.item.title}` : `Waiting for permission: ${r.item.toolName}`;
     } else if (this.compacting) a = 'Compacting the conversation';
     else if (this.running.length) {
       const its = this.running.map((id) => this.byId.get(id)).filter(Boolean);
@@ -788,6 +804,8 @@ class EngineSession {
         this.byId.set(it.id, it);
       }
       delete this.s.pendingShell;
+      // Positions: team fields on user items, team cards (team-items sidecar)
+      try { this._mergeTeamItems(); } catch (e) { this.engine.log('warn', `engine: could not load team items: ${e.message}`); }
       this.loaded = true;
     })();
     try {
@@ -1018,7 +1036,20 @@ class EngineSession {
     try { await this.ensureLoaded(); } finally { this.reattaching = false; }
     if (!this.s.cwd || !fs.existsSync(this.s.cwd)) throw new Error(`Folder not found: ${this.s.cwd}`);
     const sdk = await this.engine.loadSdk();
-    const opts = this._options();
+    const base = this._options();
+    // lane detach: will this new CLI run in the CLI broker ("Keep sessions running through a restart")?
+    const broker = this.engine.broker;
+    const keepWanted = !!(broker && !reattach && this.engine.keepOn && this.engine.keepOn());
+    // Positions (team/wire.js): a position chat runs with team/options.js instead (isolated; base supplies canUseTool,
+    // stderr and env); a CEO chat keeps everything and gains the `team` MCP server. Recomputed at every CLI start.
+    // `keep` tells it this CLI goes to the broker: a chat in no company then runs without the team server (wire.js).
+    // A re-attach never asks: the kept CLI was started without any team server (only such CLIs reach the broker), and
+    // an in-process server injected now would not be the one the CLI registered (nothing re-registers it).
+    let opts = base;
+    this.teamAttached = null;
+    const team = this.engine.team;
+    if (reattach && this.s.position) throw new Error('a position chat is never kept through a restart (it runs with the team guard and server)');
+    if (!reattach && team && typeof team.sessionOptions === 'function') opts = (await team.sessionOptions(this, base, sdk, { keep: keepWanted })) || base;
     const own = this.s.claudeSessionId && findTranscript(this.s.claudeSessionId, this.s.cwd, this.engine.projectsDir);
     if (reattach) {
       // the CLI already runs in the broker: no resume / session id flags matter (nothing is spawned)
@@ -1057,8 +1088,13 @@ class EngineSession {
     // (broker.js), so a Helm restart detaches from it instead of killing it. A re-attach always goes through it.
     this.brokerProc = null;
     this.replaySkip = null;
-    const broker = this.engine.broker;
-    if (broker && (reattach || this.engine.keepOn())) {
+    // Positions: a CLI with the in-process team server is never handed to the broker. The server lives in THIS Helm
+    // process: after a restart the kept CLI would still list mcp__team__* with nothing behind them, and a CEO's
+    // team_ask waits up to 600 s inside its tool call, which no re-attach can answer (the runtime treats a restart
+    // mid-ask as 'lost' and answers late instead). So a CEO chat (cwd in a company) and a position chat end
+    // resumable at a restart, as before keep existed; every other chat (teamAttached null: wire.js leaves the team
+    // server off when `keep`) is kept as usual.
+    if (broker && (reattach || (keepWanted && !this.teamAttached))) {
       const hooks = { onPid: (pid) => { spawned.pid = pid; }, onStderr: (d) => opts.stderr(d) };
       if (reattach) {
         this.replaySkip = known;
@@ -1080,7 +1116,8 @@ class EngineSession {
     }
     const q = sdk.query({ prompt: input, options: opts });
     Object.defineProperty(q, '_helmCli', { value: spawned, enumerable: false });
-    Object.defineProperty(opts, '_q', { value: q, enumerable: false });
+    Object.defineProperty(opts, '_q', { value: q, enumerable: false, configurable: true });
+    if (base !== opts) Object.defineProperty(base, '_q', { value: q, enumerable: false, configurable: true }); // base.canUseTool checks it
     this.q = q;
     if (reattach) {
       const busy = !!(reattach.busy || (reattach.turnEndedAt && reattach.detachedAt && reattach.turnEndedAt >= reattach.detachedAt));
@@ -1107,7 +1144,7 @@ class EngineSession {
   // not leave) and the pipe is up: a restart can detach from it.
   canKeep() {
     const p = this.brokerProc;
-    return !!(this.q && p && !p.detached && !p.exited && p.pid && this.q._helmCli && this.engine.keepSafe && this.engine.keepSafe());
+    return !!(this.q && !this.teamAttached && p && !p.detached && !p.exited && p.pid && this.q._helmCli && this.engine.keepSafe && this.engine.keepSafe());
   }
 
   // After a restart: take over the CLI the broker kept running for this session, if it still fits (keep-compat.js).
@@ -1255,9 +1292,12 @@ class EngineSession {
   // turn end, CLI exit or failed start with { interrupted, failed, error, result }; the list is emptied first.
   _settleTurn(info) {
     const list = this.turnWaiters;
-    if (!list || !list.length) return;
     this.turnWaiters = [];
-    for (const fn of list) { try { fn(info); } catch (e) { this.engine.log('warn', `engine: turn waiter failed: ${e.message}`); } }
+    for (const fn of list || []) { try { fn(info); } catch (e) { this.engine.log('warn', `engine: turn waiter failed: ${e.message}`); } }
+    // Positions: the runtime looks again (delivery queues, rollover) once this turn end has fully settled (a queued
+    // prompt may go first: _onTurnEnd pushes it after this returns).
+    const team = this.engine.team;
+    if (team && typeof team.noteTurnEnd === 'function') setImmediate(() => { try { team.noteTurnEnd(this); } catch (e) { this.engine.log('warn', `engine: team turn end failed: ${e.message}`); } });
   }
 
   _onExit(err, input) {
@@ -1421,7 +1461,7 @@ class EngineSession {
       const next = this.pendingQueue.shift();
       this.s.queued = this.pendingQueue.length;
       this._dequeued(next.item);
-      this._pushToCli(next.item, next.content);
+      this._pushToCli(next.item, next.content, next.giveBack);
     } else {
       this.s.status = pendingReq ? 'waiting' : failed ? 'error' : 'idle';
       this._refreshActivity();
@@ -1484,11 +1524,24 @@ class EngineSession {
   }
 
   // origin: 'user' = the user typed it (a client send RPC); 'helm' or missing = Helm-generated / internal.
-  async send({ text, attachments, origin }) {
+  // team (Positions, sent by the runtime with origin 'helm'): { origin: 'ask'|'duty'|'answer'|'seed', ask?, duty?,
+  // answer?, seed? } copied onto the user item (PROTOCOL "Item additions") and kept across reloads (team sidecar).
+  async send({ text, attachments, origin, team }) {
     await this.ensureLoaded();
     text = String(text == null ? '' : text);
     const atts = Array.isArray(attachments) ? attachments : [];
     if (!text.trim() && !atts.length) throw Object.assign(new Error('Nothing to send'), { code: 'empty' });
+    // Positions: an ended (rolled-over) position chat takes no new message. Refused here, before the message is stored
+    // or the chat un-archived; the CLI start would refuse it too (team/wire.js sessionOptions), but only after both.
+    const pos = this.s.position;
+    if (pos && pos.ended) throw Object.assign(new Error(`This chat of ${pos.name || pos.id} has ended; the position goes on in its newest chat.`), { code: 'refused' });
+    if (origin !== 'helm') this.lastActiveAt = Date.now(); // the owner's own words (the runtime's "talking with" rule)
+    const tw = this.engine.team;
+    // Positions: typed approval (6.3) looks at the proposal card shown last before this message, then may queue
+    // the decision note, which rides on this very message.
+    if (tw && typeof tw.beforeSend === 'function' && origin !== 'helm') {
+      try { tw.beforeSend(this, { text, origin: 'user', lastShownId: this._lastProposalCard() }); } catch (e) { this.engine.log('warn', `engine: team beforeSend failed: ${e.message}`); }
+    }
     // auth (main/account.js): with no CLI running and not signed in, refuse before the message is stored, so the
     // composer keeps the text and says why (code auth_required)
     if (!this.q && !this.starting && !this.keepPending) this._refuseIfBlocked();
@@ -1502,20 +1555,42 @@ class EngineSession {
       const head = this.pendingQueue.shift();
       this.s.queued = this.pendingQueue.length;
       this._dequeued(head.item);
-      this._pushToCli(head.item, head.content);
+      this._pushToCli(head.item, head.content, head.giveBack);
     }
     // lane steer: mid-turn, the message goes to Claude at its next step (after the current tool call), never
     // interrupting. Helm's own queue is only the fallback for when that cannot work right now.
     const steering = this.turnActive && this._canSteer(text);
     const queued = this.turnActive && !steering;
     // lane steer: an explicit Stop ended background agents; Claude is told with this message (shown apart from it).
-    const helmNote = this._takeStopNote();
+    const stopTaken = this.stopNote;
+    const stopText = this._takeStopNote();
+    const notesTaken = this._takeHelmNotes();
+    const helmNote = [stopText, ...notesTaken].filter(Boolean).join('\n\n') || null;
+    // Positions: a position chat's first message carries the seed (notebook + handoff, team/options.js positionSeed)
+    // as its own text block, in front of the text; the bubble shows only the text.
+    const seed = tw && typeof tw.seedFor === 'function' && this.s.position ? (() => { try { return tw.seedFor(this); } catch (e) { this.engine.log('warn', `engine: team seed failed: ${e.message}`); return null; } })() : null;
+    // If this message never reaches Claude (its CLI start fails, _pushToCli), the notes and the seed it took go back,
+    // so the next message carries them: notes in front of any added since, the stop note unless a newer one came,
+    // and the chat unseeded again (seedFor builds a fresh seed then).
+    const giveBack = () => {
+      if (notesTaken.length) this.helmNotes = [...notesTaken, ...this.helmNotes];
+      if (stopTaken && !this.stopNote) this.stopNote = stopTaken;
+      if (seed && this.s.position && this.s.position.seeded) {
+        const pos = { ...this.s.position };
+        delete pos.seeded;
+        this.s.position = pos;
+        this._emitUpdated();
+        this.engine.save();
+      }
+    };
+    if (seed) content = typeof content === 'string' ? [{ type: 'text', text: seed }, { type: 'text', text: content || ' ' }] : [{ type: 'text', text: seed }, ...content];
     if (helmNote) content = steer.withNote(content, helmNote);
     // lane restart: any message after a restart note (Continue or the user's own) is the follow-up; the note goes.
     if (this.s.restartNote) { delete this.s.restartNote; this._emitUpdated(); this.engine.save(); }
     const publicAtts = atts.map((a) => ({ kind: a.kind || (/^image\//.test(a.mime || '') ? 'image' : 'file'), name: a.name || baseName(a.path) || 'file', mime: a.mime || null, ...(a.dataUrl && a.dataUrl.length < 3_000_000 ? { dataUrl: a.dataUrl } : {}), ...(a.path ? { path: a.path } : {}) }));
-    const item = { id: this.nextId(), type: 'user', ts: Date.now(), text, attachments: publicAtts, uuid: randomUUID(), ...(queued ? { queued: true } : {}), ...(steering ? { steer: 'pending' } : {}), ...(helmNote ? { helmNote } : {}) };
+    const item = { id: this.nextId(), type: 'user', ts: Date.now(), text, attachments: publicAtts, uuid: randomUUID(), ...(queued ? { queued: true } : {}), ...(steering ? { steer: 'pending' } : {}), ...(helmNote ? { helmNote } : {}), ...teamFields(team, seed) };
     this.norm.store.add(item);
+    if (team || seed) this._teamSidecar({ uuid: item.uuid, fields: teamFields(team, seed) });
     prodGuard.noteSend(this, item, origin); // lane guard: the user's typed prompts can pre-approve a push
     // lane steer: a queued prompt reaches Claude later, but a "don't push" in it takes the approval back now.
     if (queued) prodGuard.noteQueued(this, item);
@@ -1527,7 +1602,7 @@ class EngineSession {
     if (this.s.status === 'error' || this.s.status === 'closed') this.s.status = 'idle';
     if (this.s.archived) this.s.archived = false; // writing to an archived session brings it back
     if (queued) {
-      this.pendingQueue.push({ item, content });
+      this.pendingQueue.push({ item, content, giveBack }); // in memory only (never saved): the closure is safe here
       this.s.queued = this.pendingQueue.length;
       this.touch();
       return { itemId: item.id, queued: true, delivery: 'queued' };
@@ -1536,7 +1611,7 @@ class EngineSession {
       this._steer(item, content);
       return { itemId: item.id, queued: false, delivery: 'next-step' };
     }
-    this._pushToCli(item, content);
+    this._pushToCli(item, content, giveBack);
     return { itemId: item.id, queued: false, delivery: 'now' };
   }
 
@@ -1569,6 +1644,183 @@ class EngineSession {
   }
 
   // The note for the next message after an explicit Stop ended agents: only those that really stopped.
+  // ---------- Positions (team/wire.js) ----------
+  // A <helm-note> for Claude that rides on this session's next message (proposal decisions, roster changes, brief
+  // edits). Never a turn by itself.
+  addHelmNote(text) {
+    const t = String(text == null ? '' : text).trim();
+    if (t) this.helmNotes.push(t.slice(0, 40_000));
+  }
+
+  _takeHelmNotes() {
+    const list = this.helmNotes;
+    this.helmNotes = [];
+    return list;
+  }
+
+  // <userData>/team-items/<helmId>.jsonl: what the transcript cannot hold for a team chat. Lines:
+  //   { uuid, fields }          PROTOCOL fields of a Helm-sent user item (origin, ask, duty, answer, seed)
+  //   { key, after, item }      a type 'team' card (no turn), placed after the item with uuid `after`
+  //   { key, patch }            a later change to that card (a proposal decided, superseded ...)
+  _teamFile() {
+    return this.engine.userDataDir ? path.join(this.engine.userDataDir, 'team-items', `${this.s.id}.jsonl`) : null;
+  }
+
+  _teamSidecar(line) {
+    const file = this._teamFile();
+    if (!file) return;
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      // As team/store.js append: a torn last line (a crash mid-write) is fenced off with a newline, so it never
+      // glues onto this record (the reader then drops only the torn line, not this one too). One write per line.
+      let lead = '';
+      try {
+        const fd = fs.openSync(file, 'r');
+        try {
+          const size = fs.fstatSync(fd).size;
+          if (size > 0) {
+            const b = Buffer.alloc(1);
+            fs.readSync(fd, b, 0, 1, size - 1);
+            if (b[0] !== 0x0a) lead = '\n';
+          }
+        } finally { fs.closeSync(fd); }
+      } catch {}
+      fs.appendFileSync(file, lead + JSON.stringify(line) + '\n');
+    } catch (e) {
+      this.engine.log('warn', `engine: could not record a team item: ${e.message}`);
+    }
+  }
+
+  _lastUuid() {
+    for (let k = this.items.length - 1; k >= 0; k--) if (this.items[k] && this.items[k].uuid) return this.items[k].uuid;
+    return this.turnAnchor || null;
+  }
+
+  // A Helm item in this chat without a turn (PROTOCOL type 'team': proposal / answer / notice cards). `key` lets a
+  // later patchCard find it (a proposal id). Returns the item id.
+  addCard(card = {}) {
+    const item = { ...card, id: this.nextId(), type: 'team', ts: Date.now() };
+    const after = this._lastUuid();
+    this.norm.store.add(item);
+    const { id, ...rest } = item;
+    this._teamSidecar({ key: card.key || null, after, item: rest });
+    return item.id;
+  }
+
+  patchCard(key, patch) {
+    if (!key || !patch) return false;
+    const it = [...this.items].reverse().find((x) => x && x.type === 'team' && x.key === key);
+    if (it) this.norm.store.patch(it.id, patch);
+    this._teamSidecar({ key, patch });
+    return !!it;
+  }
+
+  // The newest proposal card shown since the owner's last message (typed approval, 6.3), else null.
+  _lastProposalCard() {
+    for (let k = this.items.length - 1; k >= 0; k--) {
+      const it = this.items[k];
+      if (!it) continue;
+      if (it.type === 'user' && !it.origin) return null;
+      if (it.type === 'team' && it.kind === 'proposal' && it.proposal && it.proposal.id) return it.proposal.id;
+    }
+    return null;
+  }
+
+  // ensureLoaded: put the team sidecar back (fields on user items by uuid, cards after their anchor, patches applied).
+  _mergeTeamItems() {
+    const file = this._teamFile();
+    let lines = [];
+    if (file) { try { lines = readLines(file).filter((x) => x && typeof x === 'object'); } catch { lines = []; } }
+    const byUuid = new Map();
+    for (const it of this.items) if (it && it.uuid) byUuid.set(it.uuid, it);
+    const cards = new Map();
+    let n = 0;
+    for (const l of lines) {
+      if (l.uuid && l.fields) { const it = byUuid.get(l.uuid); if (it) Object.assign(it, l.fields); continue; }
+      if (l.item) { cards.set(l.key || `#${n++}`, { after: l.after || null, item: { ...l.item } }); continue; }
+      if (l.key && l.patch && cards.has(l.key)) Object.assign(cards.get(l.key).item, l.patch);
+    }
+    // a position chat's seed block never shows in its bubble
+    if (this.s.position) for (const it of this.items) if (it && it.type === 'user' && typeof it.text === 'string' && SEED_BLOCK_RE.test(it.text)) it.text = it.text.replace(SEED_BLOCK_RE, '');
+    if (!cards.size) return;
+    const anchors = this.pager && this.pager.anchors;
+    const indexOf = (uuid) => {
+      if (!uuid) return -1;
+      const own = byUuid.get(uuid);
+      const id = own ? own.id : anchors && anchors.get(uuid);
+      return id ? this.items.findIndex((x) => x && x.id === id) : -1;
+    };
+    for (const { after, item } of cards.values()) {
+      const it = { ...item, id: this.nextId(), type: 'team' };
+      const at = indexOf(after);
+      if (at >= 0) this.items.splice(at + 1, 0, it); else if (!after) this.items.unshift(it); else this.items.push(it);
+      this.byId.set(it.id, it);
+    }
+  }
+
+  // A Helm-made request card (PROTOCOL `request` kind 'access'), answered with sessions.respond like any request.
+  // Resolves with the raw answer ({ behavior: 'allow', scope } | { behavior: 'deny', message? }), { timedOut: true }
+  // after waitMs (the card closes as cancelled), or { cancelled: true, message } (signal / closeRequest).
+  // `notice`: the toast / push for the card, built by the caller (team/notice.js teamEvent); without one it is built
+  // here from the session's position. Either way it is sent once, when the card shows.
+  openRequest({ kind = 'access', title, body, access, toolName, input, toolUseId, signal, waitMs = 30 * 60_000, notice } = {}) {
+    const requestId = rid('req_');
+    const item = {
+      id: this.nextId(), type: 'request', ts: Date.now(), requestId, kind, toolName: toolName || 'request_access',
+      input: input || {}, status: 'pending', ...(toolUseId ? { toolUseId } : {}), ...(title ? { title } : {}),
+      ...(body ? { description: body } : {}), ...(access ? { access } : {}),
+    };
+    let timer = null;
+    const result = new Promise((resolve) => {
+      const r = { resolve: (x) => { clearTimeout(timer); resolve(x); }, item, input: item.input, kind, toolUseId, opts: { helmRequest: true } };
+      this.requests.set(requestId, r);
+      this.norm.store.add(item);
+      timer = setTimeout(() => {
+        if (!this.requests.has(requestId)) return;
+        this.requests.delete(requestId);
+        this.norm.store.patch(item.id, { status: 'cancelled', answer: { timedOut: true } });
+        resolve({ timedOut: true });
+        this._afterRequest();
+      }, Math.max(1, Number(waitMs) || 30 * 60_000));
+      if (timer.unref) timer.unref();
+      if (signal) {
+        const onAbort = () => this.closeRequest(requestId, 'Cancelled');
+        if (signal.aborted) { onAbort(); return; }
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+      this.s.status = 'waiting';
+      this._refreshActivity();
+      this.touch();
+      const pos = this.s.position || {};
+      this.engine.notify(notice && typeof notice === 'object' ? notice : teamEvent({
+        what: access && access.outward ? 'outward' : 'access', detail: body || title || '', sessionId: this.s.id,
+        company: { id: pos.company, name: pos.companyName }, position: { id: pos.id, name: pos.name || this.s.title },
+      }));
+    });
+    return { requestId, itemId: item.id, result };
+  }
+
+  closeRequest(requestId, why) {
+    const r = this.requests.get(requestId);
+    if (!r || !r.opts || !r.opts.helmRequest) return false;
+    this.requests.delete(requestId);
+    if (r.item.status === 'pending') this.norm.store.patch(r.item.id, { status: 'cancelled' });
+    try { r.resolve({ cancelled: true, message: why || 'Cancelled' }); } catch {}
+    this._afterRequest();
+    return true;
+  }
+
+  // The runtime withdraws an ask that waits in Helm's own queue (cancelled before Claude saw it).
+  withdrawQueued(itemId) {
+    const i = this.pendingQueue.findIndex((x) => x.item && x.item.id === itemId);
+    if (i < 0) return false;
+    this.pendingQueue.splice(i, 1);
+    this.s.queued = this.pendingQueue.length;
+    this.norm.store.patch(itemId, { queued: false, withdrawn: true });
+    this.touch();
+    return true;
+  }
+
   _takeStopNote() {
     const n = this.stopNote;
     if (!n) return null;
@@ -1578,7 +1830,7 @@ class EngineSession {
     return steer.stopNoteText(n.at, gone.map((a) => a.name));
   }
 
-  _pushToCli(item, content) {
+  _pushToCli(item, content, giveBack = null) {
     // `!` runs since the last prompt ride along, in Claude Code's own tags (shell-run.js). Taken here,
     // not in send(): a queued prompt picks up what finished while it waited, and nothing goes twice.
     const shared = this._takeShellContext();
@@ -1598,6 +1850,8 @@ class EngineSession {
       this.start().catch((e) => {
         // The prompt never reached Claude: its `!` runs are still unseen.
         if (shared) for (const id of shared.ids) this.norm.store.patch(id, { shared: false });
+        // ... nor did its Helm notes and a position's seed: they ride on the next message instead (send giveBack)
+        if (typeof giveBack === 'function') { try { giveBack(); } catch (e2) { this.engine.log('warn', `engine: could not keep the notes of ${this.s.id}: ${e2.message}`); } }
         this.turnActive = false;
         this.s.turnStartedAt = null;
         this.s.status = 'error';
@@ -1763,6 +2017,9 @@ class EngineSession {
 
   _cancelRequest(r, why) {
     if (!this.requests.has(r.item.requestId)) return;
+    // Positions: an access card outlives a Stop or a closed CLI (its grant is used on the next try); only its own
+    // signal, closeRequest or its 30-minute lifetime end it.
+    if (r.opts && r.opts.helmRequest) return;
     this.requests.delete(r.item.requestId);
     if (r.item.status === 'pending') this.norm.store.patch(r.item.id, { status: 'cancelled' });
     try {
@@ -1783,6 +2040,17 @@ class EngineSession {
     if (!r) throw Object.assign(new Error('No pending request with that id (already answered or cancelled)'), { code: 'not_found' });
     const resp = response || {};
     let result;
+    if (r.opts && r.opts.helmRequest) {
+      // Positions access card: the raw answer goes to access.js ({ behavior, scope } | { behavior: 'deny', message })
+      result = resp.behavior === 'allow'
+        ? { behavior: 'allow', scope: resp.scope === 'always' || resp.always === true ? 'always' : 'once' }
+        : { behavior: 'deny', ...(resp.message ? { message: String(resp.message).slice(0, 2000) } : {}) };
+      this.requests.delete(requestId);
+      this.norm.store.patch(r.item.id, { status: 'answered', answer: result });
+      r.resolve(result);
+      this._afterRequest();
+      return {};
+    }
     if (r.kind === 'question') {
       if (resp.behavior === 'deny') result = { behavior: 'deny', message: resp.message || 'The user declined to answer.' };
       else {

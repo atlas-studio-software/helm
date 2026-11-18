@@ -1,0 +1,3 @@
+{"at":"2026-01-08T11:00:00.000Z","ticket":"t_0b01","chain":"t_0b01","from":{"kind":"ceo","sessionId":"s_ceo1"},"to":"legal","kind":"report","state":"asked","question":"Does the cookie notice still match the shop?"}
+{"at":"2026-01-08T11:00:02.000Z","ticket":"t_0b01","chain":"t_0b01","from":{"kind":"ceo","sessionId":"s_ceo1"},"to":"legal","kind":"report","state":"delivered"}
+{"at":"2026-01-08T11:02:40.000Z","ticket":"t_0b01","chain":"t_0b01","from":{"kind":"ceo","sessionId":"s_ceo1"},"to":"legal","kind":"report","state":"answered","answer":"No: it lists an analytics cookie the shop stopped setting. Remove that row.","costUsd":0.04,"tookMs":158000}

@@ -1,0 +1,62 @@
+{
+  "id": "legal",
+  "name": "Legal",
+  "parent": null,
+  "remit": "Terms, privacy and cookie text for the shop and the app; checks the text matches what the code does.",
+  "scope": {
+    "kind": "company"
+  },
+  "status": "active",
+  "model": null,
+  "effort": "high",
+  "powers": {
+    "read": [
+      "$workspace",
+      "$company"
+    ],
+    "write": [
+      "$workspace"
+    ],
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Write",
+      "Edit",
+      "WebSearch",
+      "WebFetch",
+      "TodoWrite"
+    ],
+    "bash": "off",
+    "agents": false,
+    "worktree": false
+  },
+  "duties": [
+    {
+      "id": "privacy-recheck",
+      "title": "Re-check the privacy text after a change",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "commit",
+        "repo": "C:/Users/you/northwind-shop",
+        "branch": "main",
+        "paths": [
+          "**/privacy*",
+          "**/cookies*",
+          "**/terms*"
+        ]
+      },
+      "prompt": "A commit touched the legal pages. Check each claim on them against the code and list any that are no longer true.",
+      "output": "report",
+      "cooldownMin": 30
+    }
+  ],
+  "createdAt": "2026-01-05T09:10:00.000Z",
+  "createdBy": {
+    "proposal": "p_0a02",
+    "by": "ceo",
+    "how": "click"
+  },
+  "version": 1
+}

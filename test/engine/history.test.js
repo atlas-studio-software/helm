@@ -262,3 +262,54 @@ test('real ~/.claude/projects: cold refresh, warm search < 300 ms', { skip: !fs.
   t.diagnostic(`restart refresh from cache: scanned=${w.scanned} reparsed=${w.reparsed} ms=${w.ms}`);
   assert.ok(w.reparsed <= 5, 'only live sessions reparsed');
 });
+
+// Positions T9: chats whose cwd is at or under the team root are left out, read live, with no override.
+test('isUnderAny: at or inside a dir; prefix siblings and junk are not', () => {
+  const { isUnderAny } = require('../../main/engine/history');
+  const base = path.join(path.parse(process.cwd()).root, 'Users', 'tester');
+  const team = path.join(base, 'helm-team');
+  assert.strictEqual(isUnderAny(team, [team]), true);
+  assert.strictEqual(isUnderAny(path.join(team, 'acme', 'ceo'), [team]), true);
+  assert.strictEqual(isUnderAny(team + path.sep, [team]), true);
+  assert.strictEqual(isUnderAny(path.join(base, 'helm-team-other'), [team]), false);
+  assert.strictEqual(isUnderAny(path.join(base, 'helm-teamwork', 'x'), [team]), false);
+  assert.strictEqual(isUnderAny(base, [team]), false, 'a parent is not inside');
+  assert.strictEqual(isUnderAny(path.join(team, 'a'), ['', null, 7, path.join(base, 'elsewhere'), team]), true);
+  assert.strictEqual(isUnderAny(null, [team]), false);
+  assert.strictEqual(isUnderAny(team, []), false);
+  assert.strictEqual(isUnderAny(team, null), false);
+  if (process.platform === 'win32') {
+    assert.strictEqual(isUnderAny(path.join(team, 'acme').toUpperCase(), [team]), true, 'case-insensitive on Windows');
+    assert.strictEqual(isUnderAny(path.join(team, 'acme').replace(/\\/g, '/'), [team.replace(/\\/g, '/') + '/']), true, 'separator-agnostic');
+  }
+});
+
+test('excludeDirs: team-root chats left out of search, read live, throw = none, includeTemp does not bring them back', async (t) => {
+  const fx = makeFixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  const base = path.join(path.parse(process.cwd()).root, 'Users', 'tester');
+  const team = path.join(base, 'helm-team');
+  const slug = path.join(fx.projects, 'C--Users-tester-helm-team');
+  fs.mkdirSync(slug, { recursive: true });
+  fx.w(slug, 'tttt0001-team', [user('Teamroot staff chat', 400, { cwd: path.join(team, 'acme', 'ceo') })]);
+  fx.w(slug, 'tttt0002-teamroot', [user('Teamroot itself', 401, { cwd: team })]);
+  fx.w(slug, 'tttt0003-sibling', [user('Teamroot sibling folder', 402, { cwd: path.join(base, 'helm-team-other') })]);
+  let dirs = [team];
+  let boom = false;
+  const idx = createHistoryIndex({ projectsDir: fx.projects, cacheFile: null, minRefreshMs: 0, excludeDirs: () => { if (boom) throw new Error('settings unreadable'); return dirs; } });
+  const ids = async (o = {}) => (await idx.search({ q: 'teamroot', ...o })).map((e) => e.claudeSessionId).sort();
+
+  assert.deepStrictEqual(await ids(), ['tttt0003-sibling']);
+  assert.deepStrictEqual(await ids({ includeTemp: true }), ['tttt0003-sibling'], 'no override');
+  assert.strictEqual((await idx.search({ q: '' })).length, 9, 'the 8 fixture chats + the sibling');
+
+  dirs = [path.join(base, 'elsewhere')];
+  assert.deepStrictEqual(await ids(), ['tttt0001-team', 'tttt0002-teamroot', 'tttt0003-sibling'], 'read live on every search');
+
+  dirs = [team];
+  boom = true;
+  assert.deepStrictEqual(await ids(), ['tttt0001-team', 'tttt0002-teamroot', 'tttt0003-sibling'], 'a throw = no exclusion');
+
+  const plain = createHistoryIndex({ projectsDir: fx.projects, cacheFile: null, minRefreshMs: 0 });
+  assert.strictEqual((await plain.search({ q: 'teamroot' })).length, 3, 'no excludeDirs = nothing excluded');
+});

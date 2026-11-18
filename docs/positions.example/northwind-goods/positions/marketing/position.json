@@ -1,0 +1,56 @@
+{
+  "id": "marketing",
+  "name": "Marketing",
+  "parent": null,
+  "remit": "Release notes and launch posts for the shop and the app; drafts only, never posts.",
+  "scope": {
+    "kind": "company"
+  },
+  "status": "active",
+  "model": null,
+  "effort": "high",
+  "powers": {
+    "read": [
+      "$workspace",
+      "$company"
+    ],
+    "write": [
+      "$workspace"
+    ],
+    "tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Write",
+      "Edit",
+      "WebSearch",
+      "WebFetch",
+      "TodoWrite"
+    ],
+    "bash": "off",
+    "agents": false,
+    "worktree": false
+  },
+  "duties": [
+    {
+      "id": "release-post",
+      "title": "Draft a post for a new app release",
+      "enabled": true,
+      "trigger": {
+        "kind": "event",
+        "event": "release",
+        "repo": "C:/Users/you/northwind-app",
+        "tag": "v*"
+      },
+      "prompt": "Draft a short post for this release from its commits into work/drafts/.",
+      "output": "draft"
+    }
+  ],
+  "createdAt": "2026-01-05T09:10:00.000Z",
+  "createdBy": {
+    "proposal": "p_0a05",
+    "by": "ceo",
+    "how": "click"
+  },
+  "version": 1
+}

@@ -6,6 +6,7 @@
 //   wallpaper is chrome.js Background; styles in home.css.
 // - A greeting and clock, a glance row (working now, 5H / week usage, 5-hour pace, active time today, Railway),
 //   then the open sessions as cards (tabs first in tab order, then the sidebar's other active sessions) and a New session card.
+//   Positions (lane T10): a Team card per company where the team waits on the user leads the cards (team.list needsYou).
 // - Costs nothing while it sits there: it re-renders on the shared minute tick (activity.js minuteTick, already
 //   running) and reads data the app already holds. "Active today" is the Usage panel's shared Active hours copy
 //   (panels/activity.js), refreshed only when older than 5 minutes; no polling of its own.
@@ -27,6 +28,7 @@ import { tabIds } from './tabs.js';
 import { cx, mod } from './util.js';
 import { RailwayChip } from './railway-chip.js';
 import { NextUp } from './next-up.js';   // lane sched: next 3 in-session schedules, live countdowns
+import { teamList, setCompany } from '../positions/state.js';   // Positions (lane T10): the Team card
 
 const ACTIVITY_MAX_AGE_MS = 5 * 60_000;
 
@@ -149,6 +151,28 @@ function SinceYouLeft({ tick }) {
   </section>`;
 }
 
+// Positions (lane T10, spec 10.1): one card per company where the team waits on the user (pending access requests
+// + proposals + needs-you inbox lines: team.list companies[].needsYou), first in the grid, styled like a session
+// that needs you. Only when non-zero, so it never shows while Positions is off. Opens the Team view on that company.
+export function teamCards(list) {
+  if (!list || !list.enabled || list.rootProblem) return [];
+  return (list.companies || []).filter((c) => c && c.id && Number(c.needsYou) > 0);
+}
+function TeamCard({ c }) {
+  const n = Number(c.needsYou);
+  const line = `${n} need${n === 1 ? 's' : ''} you`;
+  return html`<button type="button" class="hcard st-waiting needs-you hcard-team" data-company=${c.id}
+      onClick=${() => { setCompany(c.id); go('team'); }} title=${`Team · ${c.name}\nAccess requests, proposals and reports waiting on you`}
+      aria-label=${`Team, ${c.name}: ${line}`}>
+    <span class="hcard-head">
+      <span class="dot waiting" aria-hidden="true"></span>
+      <span class="hcard-title">Team</span>
+    </span>
+    <span class="hcard-proj">${c.name}</span>
+    <span class="hcard-line"><span class="hcard-text">${line}</span><span class="hcard-meta">Open Team</span></span>
+  </button>`;
+}
+
 function Card({ s, now }) {
   const st = cardStatus(s, now);
   const title = s.title || 'New session';
@@ -171,6 +195,7 @@ export function HomeView() {
   const d = new Date(now);
   const phone = isPhone.value;
   const cards = homeCards(phone ? [] : tabIds.value, sessions.value, projectGroups.value.flatMap((g) => g.sessions));
+  const team = teamCards(teamList.value);
   const clock = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const date = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
   return html`<section class="home" aria-label="Home">
@@ -182,8 +207,9 @@ export function HomeView() {
       <${Glance} now=${now} />
       <${SinceYouLeft} tick=${tick} />
       <${NextUp} />
-      <h2 class="home-label">${cards.length ? 'Jump back in' : 'Start something'}</h2>
+      <h2 class="home-label">${cards.length || team.length ? 'Jump back in' : 'Start something'}</h2>
       <div class="home-cards">
+        ${team.map((c) => html`<${TeamCard} key=${`team:${c.id}`} c=${c} />`)}
         ${cards.map(({ s }) => html`<${Card} key=${s.id} s=${s} now=${now} />`)}
         <button type="button" class="hcard hcard-new" onClick=${() => { newSessionOpen.value = true; }} aria-label="New session">
           <span class="hcard-plus" aria-hidden="true"><${Icon} name="plus" size=${16} /></span>
@@ -191,7 +217,7 @@ export function HomeView() {
           ${!phone && html`<span class="hcard-keys" aria-hidden="true"><span class="kbd">${mod}</span><span class="kbd">N</span></span>`}
         </button>
       </div>
-      ${!cards.length && html`<p class="home-empty">Nothing open right now. Start a session, or pick up a past one in
+      ${!cards.length && !team.length && html`<p class="home-empty">Nothing open right now. Start a session, or pick up a past one in
         <button type="button" class="home-link" onClick=${() => go('history')}>History</button>.</p>`}
     </div>
   </section>`;

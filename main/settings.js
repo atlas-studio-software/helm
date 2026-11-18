@@ -37,7 +37,86 @@ function defaults(home) {
     keepSessionsThroughRestart: false,    // lane detach: a Helm restart re-attaches to running sessions instead of stopping them (main/engine/broker.js)
     closeIdleAfterMin: 15,                // close an idle session's claude.exe after this many minutes (0 = never; main/engine/idle-reaper.js)
     prodGuard: true,                      // ask before pushes to protected repos (<userData>/prod-guard.json) and Railway deploys, in every mode (main/engine/prod-guard.js)
+    team: { ...TEAM_DEFAULTS },           // Positions (docs/POSITIONS.md, PROTOCOL "Positions"); off until Settings > Team turns it on
   };
+}
+
+// ---------- Positions: the team.* keys (docs/POSITIONS.md sections 2.1, 5.1, 5.2, 8.3, 9.5; PROTOCOL "Positions") ----------
+const TEAM_DEFAULTS = Object.freeze({
+  enabled: false,          // no session gets the team MCP server while this is off
+  root: '~/helm-team',     // the team root: briefs, notebooks, logs. Outside every repo and every company folder (2.1)
+  maxConcurrentRuns: 2,    // machine-wide position turns at once (asks + duties); each live CLI is ~300 to 450 MB
+  usageCeilingPct: 80,     // duties wait while the 5-hour window is at or above this
+  dutiesPaused: false,     // pauses every duty of every company
+  rollPct: 32,             // a position's chat rolls to a fresh one at its next quiet moment (CONTEXT_HANDOFF_PCT)
+  rollNowPct: 40,          // ... and as soon as the turn ends from here on (CONTEXT_CEILING_PCT)
+  askWaitS: 300,           // how long a CEO's team_ask waits in-call before it returns pending
+  askWaitPositionS: 180,   // the same for a position's team_ask / colleague_ask
+  askWaitMaxS: 600,        // the most any call may wait (wait_s is clamped); the team server timeout is this + 60 s
+  ownerName: '',           // what positions call the person they work for; '' = "the owner". Lands inside prompt text,
+                           // so it is short plain text: trimmed, at most 40 characters, no control characters or < >
+});
+// whole numbers, [min, max]
+const TEAM_INT = {
+  maxConcurrentRuns: [1, 8],
+  usageCeilingPct: [1, 100],
+  rollPct: [5, 90],
+  rollNowPct: [5, 95],
+  askWaitS: [30, 600],
+  askWaitPositionS: [30, 600],
+  askWaitMaxS: [30, 600],
+};
+const TEAM_BOOL = ['enabled', 'dutiesPaused'];
+const TEAM_KEYS = Object.keys(TEAM_DEFAULTS);
+const teamIntOk = (v, k) => Number.isInteger(v) && v >= TEAM_INT[k][0] && v <= TEAM_INT[k][1];
+const OWNER_NAME_MAX = 40;
+// Why a team.ownerName can't be used, in plain words, or null when it is fine. Checked on the trimmed value.
+function ownerNameProblem(v) {
+  if (typeof v !== 'string') return 'team.ownerName must be text (a name, or empty for "the owner")';
+  const n = v.trim();
+  if (n.length > OWNER_NAME_MAX) return `team.ownerName can be at most ${OWNER_NAME_MAX} characters`;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(n)) return 'team.ownerName must be one line of plain text (no line breaks or control characters)';
+  if (/[<>]/.test(n)) return 'team.ownerName can\'t contain < or >';
+  return null;
+}
+
+// '~' or '~/x' / '~\x' -> under home; any other value must already be absolute. Returns a resolved path, or null.
+function resolveTeamRoot(root, home = os.homedir()) {
+  if (typeof root !== 'string' || !root.trim()) return null;
+  const r = root.trim();
+  if (r === '~') return path.resolve(home);
+  if (/^~[\\/]/.test(r)) return path.resolve(home, r.slice(2));
+  return path.isAbsolute(r) ? path.resolve(r) : null;
+}
+
+// for prefix checks: forward slashes, no trailing slash, lower case on Windows
+const normDir = (p) => {
+  const f = path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? f.toLowerCase() : f;
+};
+const isInside = (child, parent) => { const c = normDir(child); const p = normDir(parent); return c === p || c.startsWith(p + '/'); };
+
+// Why a team root can't be used (POSITIONS 2.1), in plain words, or null when it is fine. companyFolders are the
+// folders of the companies already on the team (the engine passes them; settings alone knows none).
+function teamRootProblem(root, { home = os.homedir(), companyFolders = [] } = {}) {
+  const dir = resolveTeamRoot(root, home);
+  if (!dir) return 'The team folder must be a full path, or start with ~ for your home folder.';
+  if (path.parse(dir).root === dir || normDir(path.parse(dir).root) === normDir(dir)) return `The team folder can't be a drive root (${dir}).`;
+  if (normDir(dir) === normDir(home)) return 'The team folder can\'t be your home folder itself. Pick a folder inside it, such as ~/helm-team.';
+  // inside a git work tree: the folder itself or any parent holds .git (a folder, or a worktree's .git file)
+  for (let d = dir; ; d = path.dirname(d)) {
+    let hit = false;
+    try { hit = fs.existsSync(path.join(d, '.git')); } catch { hit = false; }
+    if (hit) return `The team folder is inside the git repo at ${d}. Helm keeps it out of every repo, so nothing in it is pushed by accident.`;
+    if (path.dirname(d) === d) break;
+  }
+  for (const f of Array.isArray(companyFolders) ? companyFolders : []) {
+    if (typeof f !== 'string' || !f) continue;
+    if (isInside(dir, f)) return `The team folder is inside a company folder (${f}). Positions must not work inside a company's repo.`;
+    if (isInside(f, dir)) return `The team folder contains a company folder (${f}). Pick a folder outside every company folder.`;
+  }
+  return null;
 }
 
 // Sniff an image by magic bytes -> extension (null if not an image we accept).
@@ -143,6 +222,8 @@ function createSettings(opts) {
   const bgDir = path.join(userDataDir, 'backgrounds');
   fs.mkdirSync(bgDir, { recursive: true });
   const keyStore = createKeyStore({ file: path.join(userDataDir, KEY_FILE), secretBox: opts.secretBox || null, log });
+  // Positions: the folders of the companies on the team, for the team.root check (the engine supplies it; none by default)
+  const teamCompanyFolders = typeof opts.teamCompanyFolders === 'function' ? opts.teamCompanyFolders : () => [];
 
   let s = defaults(home);
   let firstRun = true;
@@ -165,6 +246,7 @@ function createSettings(opts) {
   }
   if (!Array.isArray(s.presets)) s.presets = []; // a hand-edited settings.json never breaks the dialog
   sanitizeLook();
+  sanitizeTeam();
   derive();
   refreshBackgrounds();
   if (!s.background.file || !s.backgrounds.includes(s.background.file)) s.background.file = s.backgrounds[0] || null;
@@ -233,6 +315,27 @@ function createSettings(opts) {
     if (!isObj(s.lookSync) || typeof s.lookSync.enabled !== 'boolean') s.lookSync = { enabled: true };
     if (!['desktop', 'own'].includes(s.background.mode)) s.background.mode = 'desktop';
     if (!ENUMS.theme.includes(s.theme)) s.theme = 'dark';
+  }
+
+  // Positions: a hand-edited team block never breaks Helm. Each bad value falls back to its default, unknown keys
+  // go. A root that fails teamRootProblem is KEPT (it is the user's choice): the engine reports it as rootProblem.
+  function sanitizeTeam() {
+    const t = isObj(s.team) ? s.team : {};
+    const out = {};
+    const reset = [];
+    for (const k of TEAM_KEYS) {
+      const v = t[k];
+      const ok = TEAM_BOOL.includes(k) ? typeof v === 'boolean'
+        : k === 'root' ? typeof v === 'string' && !!v.trim() && v.length <= 1000
+        : k === 'ownerName' ? !ownerNameProblem(v)
+        : teamIntOk(v, k);
+      out[k] = ok ? (k === 'root' || k === 'ownerName' ? v.trim() : v) : TEAM_DEFAULTS[k];
+      if (!ok && v !== undefined) reset.push(k);
+    }
+    if (out.rollPct >= out.rollNowPct) { out.rollPct = TEAM_DEFAULTS.rollPct; out.rollNowPct = TEAM_DEFAULTS.rollNowPct; reset.push('rollPct/rollNowPct'); }
+    for (const k of ['askWaitS', 'askWaitPositionS']) if (out[k] > out.askWaitMaxS) { out[k] = out.askWaitMaxS; reset.push(k); }
+    if (reset.length) log('settings: team values reset to defaults:', reset.join(', '));
+    s.team = out;
   }
 
   // derived fields: accent tokens for the hue, and background.blur/dim mirroring glass.dark for older clients
@@ -304,6 +407,34 @@ function createSettings(opts) {
     if (p.keepSessionsThroughRestart !== undefined && typeof p.keepSessionsThroughRestart !== 'boolean') throw badParams('keepSessionsThroughRestart must be true or false');
     if (p.closeIdleAfterMin !== undefined && !(Number.isInteger(p.closeIdleAfterMin) && p.closeIdleAfterMin >= 0 && p.closeIdleAfterMin <= 1440)) throw badParams('closeIdleAfterMin must be whole minutes, 0 (never) to 1440');
     if (p.quickPromptHotkey !== undefined && (typeof p.quickPromptHotkey !== 'string' || p.quickPromptHotkey.length > 60 || /[\r\n]/.test(p.quickPromptHotkey))) throw badParams('quickPromptHotkey must be an accelerator like Control+Alt+Space, or empty');
+    if (p.team !== undefined) validateTeam(p.team);
+  }
+
+  // Positions (Settings > Team). A partial team object merges onto the current one, so the checks that tie two
+  // values together run on the merged result.
+  function validateTeam(t) {
+    if (!isObj(t)) throw badParams('team must be an object');
+    for (const k of Object.keys(t)) if (!TEAM_KEYS.includes(k)) throw badParams(`unknown team key ${k}`);
+    for (const k of TEAM_BOOL) if (t[k] !== undefined && typeof t[k] !== 'boolean') throw badParams(`team.${k} must be true or false`);
+    for (const k of Object.keys(TEAM_INT)) {
+      if (t[k] !== undefined && !teamIntOk(t[k], k)) throw badParams(`team.${k} must be a whole number ${TEAM_INT[k][0]} to ${TEAM_INT[k][1]}`);
+    }
+    if (t.ownerName !== undefined) { const why = ownerNameProblem(t.ownerName); if (why) throw badParams(why); }
+    if (t.root !== undefined) {
+      if (typeof t.root !== 'string' || !t.root.trim() || t.root.length > 1000) throw badParams('team.root must be a folder path');
+      const cur = resolveTeamRoot(s.team.root, home);
+      const next = resolveTeamRoot(t.root, home);
+      // re-saving the current root never fails (its problem, if any, is shown by the engine as rootProblem)
+      if (!(cur && next && normDir(cur) === normDir(next))) {
+        let folders = [];
+        try { folders = teamCompanyFolders() || []; } catch (e) { log('team company folders', e); }
+        const why = teamRootProblem(t.root, { home, companyFolders: folders });
+        if (why) throw badParams(why);
+      }
+    }
+    const m = { ...s.team, ...t };
+    if (m.rollPct >= m.rollNowPct) throw badParams(`team.rollPct (${m.rollPct}) must be below team.rollNowPct (${m.rollNowPct})`);
+    for (const k of ['askWaitS', 'askWaitPositionS']) if (m[k] > m.askWaitMaxS) throw badParams(`team.${k} (${m[k]} s) can't be above team.askWaitMaxS (${m.askWaitMaxS} s)`);
   }
 
   // Launch presets (New session dialog): the whole list is replaced on every set.
@@ -359,6 +490,8 @@ function createSettings(opts) {
     // url (and httpUrl, the plain-http fallback while https is live) are computed by the host
     if (p.phone) p.phone = { enabled: p.phone.enabled ?? s.phone.enabled, url: s.phone.url, ...(s.phone.httpUrl ? { httpUrl: s.phone.httpUrl } : {}) };
     if (typeof p.quickPromptHotkey === 'string') p.quickPromptHotkey = p.quickPromptHotkey.trim();
+    if (p.team && typeof p.team.root === 'string') p.team = { ...p.team, root: p.team.root.trim() };
+    if (p.team && typeof p.team.ownerName === 'string') p.team = { ...p.team, ownerName: p.team.ownerName.trim() };
     s = merge(s, p);
     if (p.presets) s.presets = p.presets.map(cleanPreset);
     if (p.projects) s.projects = p.projects.map((pr) => ({ cwd: pr.cwd, name: pr.name || path.basename(pr.cwd) || pr.cwd, pinned: !!pr.pinned }));
@@ -458,7 +591,10 @@ function createSettings(opts) {
     if (before !== key) emit('settings.updated', get());
   }
 
-  return { get, set, applyLook, lookValues, uploadBackground, onEngineEvent, addProject, setPhoneUrl, getApiKey: () => keyStore.get(), setApiKey, apiKeyError: () => keyStore.error(), bgDirs: [bgDir, uiBgDir].filter(Boolean), file, firstRun };
+  // the team root as a resolved path (null if the stored value can't be resolved)
+  const teamRoot = () => resolveTeamRoot(s.team.root, home);
+
+  return { get, set, teamRoot, applyLook, lookValues, uploadBackground, onEngineEvent, addProject, setPhoneUrl, getApiKey: () => keyStore.get(), setApiKey, apiKeyError: () => keyStore.error(), bgDirs: [bgDir, uiBgDir].filter(Boolean), file, firstRun };
 }
 
-module.exports = { createSettings, imageExt, defaults };
+module.exports = { createSettings, imageExt, defaults, TEAM_DEFAULTS, resolveTeamRoot, teamRootProblem, ownerNameProblem };

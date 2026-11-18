@@ -33,6 +33,28 @@ function isTempCwd(cwd, tempDir = os.tmpdir()) {
   return c === t || c.startsWith(t + path.sep);
 }
 
+// Positions (T9): cwd is one of `dirs` or inside one (case-insensitive on Windows, separator-agnostic like
+// isTempCwd). Pure; non-string / empty entries are ignored. A sibling that only shares the prefix
+// (~/helm-team-other vs ~/helm-team) is not inside.
+function isUnderAny(cwd, dirs) {
+  if (!cwd || typeof cwd !== 'string' || !Array.isArray(dirs)) return false;
+  for (const d of dirs) {
+    if (typeof d === 'string' && d.trim() && isTempCwd(cwd, d)) return true;
+  }
+  return false;
+}
+
+// Reads an excludeDirs option live: a function returning a list of folders. Missing, a throw or a non-array = [].
+function readDirs(fn) {
+  if (typeof fn !== 'function') return [];
+  try {
+    const v = fn();
+    return Array.isArray(v) ? v.filter((d) => typeof d === 'string' && d.trim()) : [];
+  } catch {
+    return [];
+  }
+}
+
 // ---------- line parsing ----------
 
 function collapse(s) {
@@ -227,6 +249,9 @@ function createHistoryIndex({
   projectsDir = path.join(os.homedir(), '.claude', 'projects'),
   cacheFile = null,
   log = () => {},
+  // Positions (T9): () => [absolute folders] read live on every search (the team root is a setting). Transcripts
+  // whose cwd is at or under one are left out of search, with no override (includeTemp does not bring them back).
+  excludeDirs = null,
   ...over
 } = {}) {
   const opts = { ...DEFAULTS, ...over };
@@ -348,7 +373,8 @@ function createHistoryIndex({
     else if (!lastRefreshAt || Date.now() - lastRefreshAt >= opts.minRefreshMs) await refresh();
     const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;
     const terms = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
-    const pool = includeTemp ? sorted : sorted.filter((e) => !isTempCwd(e.cwd, opts.tempDir));
+    const excluded = readDirs(excludeDirs);
+    const pool = sorted.filter((e) => (includeTemp || !isTempCwd(e.cwd, opts.tempDir)) && !(excluded.length && isUnderAny(e.cwd, excluded)));
     if (!terms.length) return pool.slice(0, n);
     const out = [];
     for (const e of pool) {
@@ -371,4 +397,4 @@ function createHistoryIndex({
   return { search, refresh, entries };
 }
 
-module.exports = { createHistoryIndex, isTempCwd, _internal: { parseTranscript, realPrompt, projectOf } };
+module.exports = { createHistoryIndex, isTempCwd, isUnderAny, readDirs, _internal: { parseTranscript, realPrompt, projectOf } };

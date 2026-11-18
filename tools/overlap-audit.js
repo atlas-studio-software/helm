@@ -67,6 +67,14 @@ const PANEL = (id) => `async () => {
   p.inspectorOpen.value = true; p.showPanel(${JSON.stringify(id)});
   const st = await import('/shell/state.js'); if (st.isPhone.value) st.sheetOpen.value = true;
 }`;
+// Positions (lane T10): open the Team view, wait for Example Co's tree, then run `then` (t = /positions/state.js)
+const TEAM = (then) => `async () => {
+  (await import('/shell/state.js')).go('team');
+  const t = await import('/positions/state.js');
+  for (let i = 0; i < 80 && !(t.companyId.value && t.companies.value[t.companyId.value] && t.companies.value[t.companyId.value].data); i++) await new Promise((r) => setTimeout(r, 50));
+  if (!t.companyId.value) throw new Error('team view: no company loaded');
+  ${then}
+}`;
 const SCENARIOS = [
   S('home', `async () => { (await import('/shell/state.js')).view.value = 'home'; }`, { pages: 3 }),
   S('chat', CHAT, { pages: 6, from: 'top' }),
@@ -90,6 +98,19 @@ const SCENARIOS = [
   S('settings', `async () => { (await import('/shell/state.js')).go('settings'); }`, { pages: 12 }),
   S('history', `async () => { (await import('/shell/state.js')).go('history'); }`, { pages: 3 }),
   S('deck', `async () => { (await import('/shell/state.js')).go('deck'); }`, { pages: 3 }),
+  // Positions (lane T10): the Team view (org tree; wide desktop also shows the CEO's detail), one position's detail
+  // (Legal: the narrow layouts open it as its own screen), the CEO chat with its live Ask card, and Legal's own chat
+  // (seed line, Asked-by bubble, its own Ask). Data: ui/lib/mock-positions.js + the mock sessions in mock-data.js.
+  S('team', TEAM(''), { pages: 3, wait: 600 }),
+  S('team-detail', TEAM(`t.select('legal');`), { pages: 3, wait: 700 }),
+  S('team-cards', `async () => { (await import('/shell/state.js')).openSession('s_ceo'); }`, { pages: 3, wait: 600 }),
+  S('team-position', `async () => { (await import('/shell/state.js')).openSession('s_pos_legal'); }`, { pages: 3, wait: 600 }),
+  // the sidebar's Team section with the project groups folded (desktop), and the phone list with its Team icon
+  S('team-sidebar', `async () => {
+    const s = await import('/shell/state.js');
+    if (s.isPhone.value) { s.view.value = 'session'; s.phoneScreen.value = 'list'; } else s.openSession('s_pos_legal');
+    s.collapsedGroups.value = Object.fromEntries(s.projectGroups.value.map((g) => [g.key, true]));
+  }`, { pages: 2, wait: 600 }),
   S('new-session', `async () => { (await import('/shell/state.js')).newSessionOpen.value = true; }`, { root: '.modal', pages: 2 }),
   S('palette', `async () => { (await import('/shell/state.js')).paletteOpen.value = true; }`, { root: '.palette, .modal, [role=dialog]' }),
   // desktop only: the phone has no keyboard sheet (ShortcutsSheet renders nothing when isPhone)

@@ -130,3 +130,55 @@ test('engine: sessions.handoff sends one visible prompt and resolves the reply; 
     await engine.shutdown();
   }
 });
+
+// Positions T9: engine callers (rollover) pass their own prompt; over RPC a client-supplied prompt is ignored.
+test('engine: handoff({ id, prompt }) sends the given prompt; sessions.handoff ignores a client prompt', async () => {
+  const { createHandoff } = require('../../main/engine/handoff');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'helm-handoff-p-'));
+  const mk = (p) => fs.mkdtempSync(path.join(root, p));
+  let mode = 'ok';
+  const sdk = createFakeSdk(async function* (um) {
+    const text = JSON.stringify(um.message && um.message.content);
+    if (mode === 'empty') { yield F.result(0.01); return; }
+    const reply = text.includes('ROLLOVER-NOTE') ? 'Rollover: state for the next chat' : 'Done: X';
+    for (const f of F.textTurn('m' + Math.random(), reply)) yield f;
+    yield F.result(0.01);
+  }, { projectsDir: mk('proj-') });
+  const engine = createEngine({ userDataDir: mk('ud-'), emit: () => {}, log: () => {}, sdk, claudePath: null, projectsDir: mk('proj2-'), statuslineDir: mk('sl-'), etaDir: false, external: false, tempDir: path.join(os.tmpdir(), 'not-the-test-dirs'), getIdleCloseMs: () => 0 });
+  const m = engine.methods;
+  const es = (id) => engine._internal.sessions.get(id);
+  const get = (id) => { const s = es(id); if (!s) { const e = new Error('no such session'); e.code = 'not_found'; throw e; } return s; };
+  const h = createHandoff({ get });
+  try {
+    assert.strictEqual(typeof h.handoff, 'function');
+    const a = await m['sessions.create']({ cwd: mk('cwd-') });
+    const sends = [];
+    const realSend = es(a.id).send.bind(es(a.id));
+    es(a.id).send = (o) => { sends.push(o); return realSend(o); };
+
+    // engine caller: own prompt, origin helm, same { text, from } shape
+    const r = await h.handoff({ id: a.id, prompt: 'Write a ROLLOVER-NOTE please.' });
+    assert.deepStrictEqual(sends, [{ text: 'Write a ROLLOVER-NOTE please.', origin: 'helm' }]);
+    assert.strictEqual(r.text, 'Rollover: state for the next chat');
+    assert.strictEqual(r.from.id, a.id);
+
+    // no prompt = HANDOFF_PROMPT
+    sends.length = 0;
+    assert.strictEqual((await h.handoff({ id: a.id })).text, 'Done: X');
+    assert.deepStrictEqual(sends, [{ text: HANDOFF_PROMPT, origin: 'helm' }]);
+
+    // RPC: a client prompt / origin is ignored
+    sends.length = 0;
+    const r2 = await h.methods['sessions.handoff']({ id: a.id, prompt: 'Write a ROLLOVER-NOTE please.', origin: 'user' });
+    assert.deepStrictEqual(sends, [{ text: HANDOFF_PROMPT, origin: 'helm' }]);
+    assert.strictEqual(r2.text, 'Done: X');
+
+    // same error codes on the engine path
+    mode = 'empty';
+    await assert.rejects(h.handoff({ id: a.id, prompt: 'Write a ROLLOVER-NOTE please.' }), (e) => e.code === 'empty');
+    await assert.rejects(h.handoff({ id: 'nope', prompt: 'x' }), (e) => e.code === 'not_found');
+    delete es(a.id).send;
+  } finally {
+    await engine.shutdown();
+  }
+});

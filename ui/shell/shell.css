@@ -267,9 +267,10 @@ html[data-theme="light"] .bg-photo:not(.bg-lined) { filter: blur(var(--bg-blur))
 .sh-info > .sh-state.st-waiting { color: var(--warn); }
 .sh-info > .sh-state.st-error { color: var(--danger); }
 .sh-info > .sh-eta { color: var(--text-2); }
-.sh-info > .sh-folder, .sh-info > .sh-git { gap: 5px; }
+.sh-info > .sh-folder, .sh-info > .sh-git, .sh-info > .sh-reports { gap: 5px; }
+.sh-info > .sh-reports .sh-t { max-width: 28ch; }   /* Positions: who a position chat reports to */
 .sh-info > .sh-folder .sh-t { max-width: 24ch; }
-.sh-info > .sh-folder > svg, .sh-info > .sh-git > svg { flex: none; opacity: 0.8; }
+.sh-info > .sh-folder > svg, .sh-info > .sh-git > svg, .sh-info > .sh-reports > svg { flex: none; opacity: 0.8; }
 .sh-git-branch { font-family: var(--mono); font-size: var(--fs-2xs); max-width: 22ch; }
 .sh-git-x { color: var(--text-2); gap: 6px; }
 .sh-git-up { color: var(--text-3); }

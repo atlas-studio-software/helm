@@ -1,0 +1,14 @@
+{
+  "id": "northwind-goods",
+  "name": "Northwind Goods",
+  "folders": [
+    "C:/Users/you/northwind-shop",
+    "C:/Users/you/northwind-app"
+  ],
+  "createdAt": "2026-01-05T09:00:00.000Z",
+  "createdBy": {
+    "proposal": "p_0a01",
+    "how": "click"
+  },
+  "version": 1
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "n": 1,
+    "helmSessionId": "s_ex01",
+    "claudeSessionId": "00000000-0000-4000-8000-000000000001",
+    "startedAt": "2026-01-06T10:00:00.000Z",
+    "endedAt": "2026-01-07T16:00:00.000Z",
+    "endReason": "full",
+    "contextPct": 33.1,
+    "handoff": "Done: privacy page checked. In progress: cookie notice. Waiting on: nothing. Next: send the cookie finding to the CEO."
+  },
+  {
+    "n": 2,
+    "helmSessionId": "s_ex02",
+    "claudeSessionId": null,
+    "startedAt": "2026-01-07T16:01:00.000Z"
+  }
+]

@@ -5,8 +5,9 @@
 //   start view) only the strip and the logo stay and the cards float over the unblurred wallpaper.
 // Phone (<= 820px): one column: sessions list → session screen (back button); inspector as a
 //   bottom sheet; bottom nav (Home, Sessions, History, Queue, Settings); it starts on Home.
+//   Team (Positions) has no 6th nav button (cramped at 320 px): the list header icon and the Home card open it.
 // Shortcuts: Ctrl+K palette, Ctrl+N new session, Ctrl+B sidebar, Ctrl+\ inspector, Ctrl+Shift+\ split view, Ctrl+Shift+4 4 corners,
-//   Ctrl+1..8 tab (Ctrl+9 last tab; the phone: sidebar order), Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+W tabs (tabs.js), Ctrl+H history, Ctrl+, settings, Ctrl+Shift+D Deck (every session as a tile), Ctrl+F find in the conversation (chat), Esc closes overlays,
+//   Ctrl+1..8 tab (Ctrl+9 last tab; the phone: sidebar order), Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+W tabs (tabs.js), Ctrl+H history, Ctrl+, settings, Ctrl+Shift+D Deck (every session as a tile), Ctrl+Shift+T Team (Positions: ui/positions/team.js), Ctrl+F find in the conversation (chat), Esc closes overlays,
 //   ? or Ctrl+/ the keyboard shortcuts sheet (shortcuts.js; keep its list in step when adding one here),
 //   Ctrl+Shift+H Home (home.js: greeting, glance and session cards over the unblurred wallpaper; Helm opens there).
 // Split view (desktop): two .main panels side by side, each with its own header, ChatView and Composer; the
@@ -45,6 +46,11 @@ import { visibleSlots, cornerChoices } from '../lib/pane-layout.js';
 import { displayStatus } from '../lib/session-status.js';
 import { ExternalPane } from './elsewhere.js';
 import { DeckView } from '../deck/deck.js';
+import { TeamView } from '../positions/team.js';   // Positions (lane T6 view, wired by T10)
+import { teamList, loadList as loadTeamList, ensureEvents as ensureTeamEvents } from '../positions/state.js';
+import { teamNeedsYou } from './chrome.js';
+import { on as onEvent } from '../lib/transport.js';
+import { settings } from '../lib/store.js';
 import { UpdateChip } from './update.js';   // lane restart
 import { switchToTab, tabIds } from './tabs.js';   // lane tabs: session tabs in the strip (Ctrl+Tab / Ctrl+W live in tabs.js)
 
@@ -71,6 +77,7 @@ function useShortcuts() {
       else if (k === 'h' && e.shiftKey) goHome();
       else if (k === 'h') { if (view.value === 'history') goBack(); else go('history'); }
       else if (k === 'd' && e.shiftKey) { if (view.value === 'deck') goBack(); else go('deck'); }
+      else if (k === 't' && e.shiftKey) { if (view.value === 'team') goBack(); else go('team'); }   // Positions: the Team view
       else if (k === ',') { if (view.value === 'settings') goBack(); else go('settings'); }
       else if (/^[1-9]$/.test(e.key) && !e.shiftKey) { if (isPhone.value) switchToIndex(+e.key - 1); else switchToTab(+e.key); }   // desktop: tabs (1..8, 9 = last)
       else hit = false;
@@ -154,6 +161,7 @@ function Mains() {
   if (v === 'history') return html`<${Pane} key="p0"><${HistoryView} /><//>`;
   if (v === 'settings') return html`<${Pane} key="p0"><${SettingsView} /><//>`;
   if (v === 'deck') return html`<${Pane} key="p0"><${DeckView} /><//>`;
+  if (v === 'team') return html`<${Pane} key="p0"><${TeamView} /><//>`;
   if (externalView.value) return html`<${Pane} key="p0"><${ExternalPane} /><//>`;
   const st = layout.value;
   if (st.n === 1) return html`<${Pane} key="p0"><${SessionPane} /><//>`;
@@ -257,6 +265,7 @@ function Phone() {
   else if (v === 'history') screen = html`<${HistoryView} />`;
   else if (v === 'settings') screen = html`<${SettingsView} />`;
   else if (v === 'deck') screen = html`<${DeckView} />`;
+  else if (v === 'team') screen = html`<${TeamView} />`;   // Positions: reached from the list header and the Home card
   else if (v === 'queue') screen = html`<section class="view view-queue"><${Inspector} panel="queue" /></section>`;
   else if (inExternal) screen = html`<${ExternalPane} />`;
   else if (inSession) screen = html`<${SessionPane} />`;
@@ -266,6 +275,8 @@ function Phone() {
       <h1>Helm</h1>
       <span class="grow"></span>
       ${sessions.value.some((s) => !s.archived) && html`<button class="icon-btn plist-deck" aria-label="Deck: every session as a tile" onClick=${() => go('deck')}><${Icon} name="deck" size=${19} stroke=${1.5} /></button>`}
+      ${teamList.value?.enabled && html`<button class="icon-btn plist-deck plist-team" aria-label=${teamNeedsYou.value ? `Team: ${teamNeedsYou.value} need${teamNeedsYou.value === 1 ? 's' : ''} you` : 'Team'}
+        onClick=${() => go('team')}><${Icon} name="users" size=${19} stroke=${1.5} />${teamNeedsYou.value > 0 && html`<span class="rail-badge warn">${teamNeedsYou.value}</span>`}</button>`}
       <button class="btn btn-primary" onClick=${() => { newSessionOpen.value = true; }}><${Icon} name="plus" size=${16} />New</button>
     </header>
     ${sessions.value.length ? html`<${Sidebar} />` : html`<${Welcome} />`}
@@ -286,8 +297,29 @@ function Phone() {
   </div>`;
 }
 
+// Positions (lane T10): team.list feeds the rail badge, the phone list's Team icon, the sidebar's Team section and the
+// Home card, so it is read once at start (and on every reconnect) wherever the user is, not only when the Team view
+// mounts. ensureEvents keeps it fresh on team.updated / team.inbox.appended; a decided proposal and the Settings >
+// Team switch change the needs-you counts too, so those re-read it (debounced; team.list reads files only).
+function useTeamGlance() {
+  useEffect(() => {
+    ensureTeamEvents();
+    let t = 0;
+    const reread = () => { clearTimeout(t); t = setTimeout(() => loadTeamList({ quiet: true }), 200); };
+    let was = settings.peek()?.team?.enabled;
+    const offs = [
+      onEvent('transport.open', reread),
+      onEvent('team.proposal.updated', reread),
+      onEvent('settings.updated', (st) => { const now = st?.team?.enabled; if (now !== was) { was = now; reread(); } }),
+    ];
+    loadTeamList({ quiet: true });
+    return () => { clearTimeout(t); for (const off of offs) if (typeof off === 'function') off(); };
+  }, []);
+}
+
 export function Shell() {
   useShortcuts();
+  useTeamGlance();
   useShortcutsKey();
   useWhatsNewAutoShow();
   // phone: Esc / browser back closes the sheet first

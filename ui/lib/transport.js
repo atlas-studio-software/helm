@@ -354,7 +354,15 @@ async function mockRpc(method, p = {}) {
       return mock.claudeConfigMock(method, p);   // lane cc-config (ui/lib/mock-claude-config.js)
     case 'worktrees.info': case 'worktrees.list': case 'worktrees.create': case 'worktrees.deps': case 'worktrees.merge': case 'worktrees.remove': return mock.worktreesMock(method, p);   // lane helm-worktrees (ui/lib/mock-worktrees.js)
     case 'account.status': case 'account.setApiKey': return mock.accountMock(method, p);   // lane account (ui/lib/mock-account.js)
-    default: throw new Error(`mock: no handler for ${method}`);
+    default:
+      // lane positions (T10): team.* goes to the Team mock (ui/lib/mock-positions.js; ?team=one|empty|off|root|nopositions|
+      // error|loading|conflict|deep picks a case). The Settings > Team switch is honoured here, so turning Positions
+      // off in the mock shows the same "Team is off" state the host gives.
+      if (method.startsWith('team.')) {
+        if (method === 'team.list' && S.settings.team && S.settings.team.enabled === false) return { enabled: false, root: S.settings.team.root || '~/helm-team', companies: [] };
+        return (await import('./mock-positions.js')).mockTeam(method, p, { state: S, emit });
+      }
+      throw new Error(`mock: no handler for ${method}`);
   }
 }
 

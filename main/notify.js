@@ -8,13 +8,73 @@
 //  - tray: Show Helm / Quick prompt / N waiting / Quit
 // Icons come from ui/assets (icon.png for toasts, icon.ico for the tray); the painted
 // placeholder in icons.js is only the fallback when those files are missing.
+//  - team notices (Positions, source "team": a position's access / outward card, a proposal, a duty run):
+//    titled from the owner's point of view by teamNotice() below; clicking one without a session opens the
+//    Team view (`app.select { view: 'team', company }`). They obey notifications.waiting like any wait.
 // Owner: lane host (B).
 const fs = require('fs');
 const path = require('path');
 const { badgeBitmap, appIconBitmap } = require('./icons');
-// The 32% / 40% context tracker lives with the fleet code (pure JS, no SDK), so the fallback engine can't break it.
-let ContextAlerts = null;
-try { ({ ContextAlerts } = require('./engine/fleet')); } catch { ContextAlerts = null; }
+
+// ----- team notices (pure; the engine and main/push.js require this file for them) -----
+const oneLine = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+const cap = (s, n) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+const blankTitle = (t) => !t || t === 'Session';
+
+/**
+ * teamNotice({ what, position: { id, name }, company: { id, name }, detail?, title?, action?, sessionId? })
+ *   what: 'access' | 'outward' | 'proposal' | 'duty' | 'duty-failed'
+ *   detail: the body: what the card asks for / the outward command / the proposal's why / the report summary / the error
+ *   title: the subject: the duty's name (duty, duty-failed) or the proposal's target name (proposal)
+ *   action: proposals only, 'create' (default) | 'edit' | 'retire' | 'company'
+ * -> { kind: 'waiting', source: 'team', title, body, sessionId?, team: { what, company, position, companyName,
+ *      positionName, subject, action } }   (company / position = ids; the names ride along so outputs can re-title)
+ * Titles are one line, never empty, at most 120 chars; the body is one line, at most 900 (push cuts it to 400).
+ */
+function teamNotice(evt) {
+  const e = evt && typeof evt === 'object' ? evt : {};
+  const what = oneLine(e.what) || 'waiting';
+  const pos = e.position && typeof e.position === 'object' ? e.position : {};
+  const co = e.company && typeof e.company === 'object' ? e.company : {};
+  const positionName = cap(oneLine(pos.name), 60) || null;
+  const companyName = cap(oneLine(co.name), 60) || null;
+  const subject = cap(oneLine(e.title), 80) || null;
+  const action = what === 'proposal' ? (oneLine(e.action) || 'create') : null;
+  const who = positionName || 'Your team';
+  let title;
+  if (what === 'access' || what === 'outward') title = `${who} needs your OK`;
+  else if (what === 'proposal') {
+    if (action === 'retire') title = `${who} proposes retiring ${subject || 'a report'}`;
+    else if (action === 'edit') title = `${who} proposes a change to ${subject || 'a report'}`;
+    else if (action === 'company') title = `${who} proposes a change to ${subject || companyName || 'the company'}`;
+    else title = subject ? `${who} proposes a new report: ${subject}` : `${who} proposes a new report`;
+  } else if (what === 'duty') title = subject ? `${who}: ${subject} is done` : `${who} finished a duty`;
+  else if (what === 'duty-failed') title = subject ? `${who}'s duty failed: ${subject}` : `${who}'s duty failed`;
+  else title = `${who} needs you`;
+  let body = oneLine(e.detail);
+  // an access / outward card names the company it is for (once: re-titling an already built notice adds nothing)
+  if ((what === 'access' || what === 'outward') && companyName && !body.includes(companyName)) body = body ? `${body} · ${companyName}` : companyName;
+  const sessionId = e.sessionId ? String(e.sessionId) : null;
+  return {
+    kind: 'waiting', source: 'team', title: cap(title, 120), body: cap(body, 900), ...(sessionId ? { sessionId } : {}),
+    team: { what, company: co.id != null ? String(co.id) : null, position: pos.id != null ? String(pos.id) : null, companyName, positionName, subject, action },
+  };
+}
+
+// Any `notify` event -> the one both outputs (desktop toast, phone push) show. Only source "team" changes:
+// with n.team it is re-titled by teamNotice (a caller's own title wins only when n.team carries no position
+// name); without it the title is kept, cleaned, and an empty / "Session" one becomes "Team needs you".
+function normalizeNotice(n) {
+  if (!n || typeof n !== 'object' || n.source !== 'team') return n;
+  const own = cap(oneLine(n.title), 120);
+  const t = n.team && typeof n.team === 'object' && n.team.what ? n.team : null;
+  if (!t) return { ...n, title: blankTitle(own) ? 'Team needs you' : own, body: cap(oneLine(n.body), 900) };
+  const built = teamNotice({
+    what: t.what, position: { id: t.position, name: t.positionName }, company: { id: t.company, name: t.companyName },
+    title: t.subject, action: t.action, detail: n.body,
+  });
+  return { ...n, title: t.positionName || blankTitle(own) ? built.title : own, body: built.body };
+}
 
 /**
  * createNotifier({ electron, getWindow, showWindow, broadcast, selectSession?, getSettings, iconDir, onQuit,
@@ -25,6 +85,10 @@ try { ({ ContextAlerts } = require('./engine/fleet')); } catch { ContextAlerts =
  *      showToast(n, { closeAfterMs }), trayInfo(), refreshTray(), destroy(), waitingCount(), appIcon }
  */
 function createNotifier(opts) {
+  // The 32% / 40% context tracker lives with the fleet code (pure JS, no SDK), so the fallback engine can't break it.
+  // Required here, not at the top, so requiring this file for teamNotice() loads no engine code.
+  let ContextAlerts = null;
+  try { ({ ContextAlerts } = require('./engine/fleet')); } catch { ContextAlerts = null; }
   const { electron, getWindow, showWindow, broadcast, getSettings, iconDir, onQuit, onRestart = null, onQuickPrompt = null, enableTray = true, record = null, log = () => {} } = opts;
   // onContextAlert(n): every context hand-off alert this notifier raises, after its own toast; main.js sends it
   // to the phone (main/push.js pushDecision), since these alerts never pass through the engine's `notify` event.
@@ -125,6 +189,7 @@ function createNotifier(opts) {
   }
 
   function notify(n) {
+    n = normalizeNotice(n); // team notices: owner-facing title (a waiting notice, so notifications.waiting gates it)
     if (!n || !n.title) return;
     const prefs = (getSettings() || {}).notifications || {};
     if (n.kind && prefs[n.kind] === false && n.source !== 'context') return; // context alerts have their own switch
@@ -132,14 +197,18 @@ function createNotifier(opts) {
     showToast(n);
   }
 
-  // What clicking a notification does: bring the window up on that session.
+  // What clicking a notification does: bring the window up on that session; a team notice with no session
+  // (a duty run, a proposal from a scheduled turn) opens the Team view on its company instead.
   function handleClick(n) {
-    if (n && n.sessionId) selectSession(n.sessionId); else showWindow();
+    if (n && n.sessionId) selectSession(n.sessionId);
+    else if (n && n.source === 'team') { showWindow(); broadcast('app.select', { view: 'team', company: (n.team && n.team.company) || null }); }
+    else showWindow();
   }
 
   // Show one toast. Resolves { shown, failed?, error? } once Windows accepts or rejects it.
   function showToast(n, { closeAfterMs = 0 } = {}) {
     if (!Notification.isSupported()) return Promise.resolve({ shown: false, error: 'notifications not supported' });
+    n = normalizeNotice(n);
     const note = new Notification({ title: String(n.title).slice(0, 120), body: String(n.body || '').slice(0, 900), icon: appIcon.img, silent: n.kind === 'info' });
     live.add(note);
     const drop = () => live.delete(note);
@@ -207,4 +276,4 @@ function createNotifier(opts) {
   return api;
 }
 
-module.exports = { createNotifier };
+module.exports = { createNotifier, teamNotice, normalizeNotice };

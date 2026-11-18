@@ -304,3 +304,33 @@ test('idle back-off: pollMs -> idlePollMs after idleAfterPolls quiet polls; acti
     fx.cleanup();
   }
 });
+
+// Positions T9: sessions whose cwd is at or under the team root are left out, read live; a throw = no exclusion.
+test('list(): excludeDirs leaves out team-root sessions (live), not a prefix sibling; a throwing excludeDirs excludes nothing', async () => {
+  const fx = makeFixture();
+  try {
+    const base = path.join(path.parse(process.cwd()).root, 'Users', 'tester');
+    const team = path.join(base, 'helm-team');
+    fx.put('C--Users-tester-helm-team', 'tm-staff', { ageMs: 1000, cwd: path.join(team, 'acme', 'ceo') });
+    fx.put('C--Users-tester-helm-team', 'tm-root', { ageMs: 2000, cwd: team });
+    fx.put('C--Users-tester-helm-team-other', 'tm-sibling', { ageMs: 3000, cwd: path.join(base, 'helm-team-other') });
+    fx.put('C--work-shop', 'plain', { ageMs: 4000 });
+    let dirs = [team];
+    let boom = false;
+    const tr = createExternalTracker({ projectsDir: fx.projects, etaDir: fx.etaDir, now: () => fx.NOW, excludeDirs: () => { if (boom) throw new Error('settings unreadable'); return dirs; } });
+    const ids = async () => (await tr.list()).map((s) => s.claudeSessionId).sort();
+
+    assert.deepStrictEqual(await ids(), ['plain', 'tm-sibling']);
+    if (process.platform === 'win32') {
+      dirs = [team.toUpperCase().replace(/\\/g, '/') + '/'];
+      assert.deepStrictEqual(await ids(), ['plain', 'tm-sibling'], 'case-insensitive, separator-agnostic on Windows');
+    }
+    dirs = [];
+    assert.deepStrictEqual(await ids(), ['plain', 'tm-root', 'tm-sibling', 'tm-staff'], 'read live on every listing');
+    dirs = [team];
+    boom = true;
+    assert.deepStrictEqual(await ids(), ['plain', 'tm-root', 'tm-sibling', 'tm-staff'], 'a throw = no exclusion');
+  } finally {
+    fx.cleanup();
+  }
+});

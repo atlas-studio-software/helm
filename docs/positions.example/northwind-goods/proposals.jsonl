@@ -1,0 +1,2 @@
+{"at":"2026-01-05T09:09:00.000Z","id":"p_0a03","action":"create","by":{"kind":"position","id":"legal","sessionId":"s_ex00"},"target":"tax","parent":"legal","draft":{"id":"tax","name":"Tax Specialist","remit":"Sales tax and VAT questions for Northwind Goods orders and payouts."}}
+{"at":"2026-01-05T09:10:00.000Z","id":"p_0a03","action":"create","target":"tax","decision":{"at":"2026-01-05T09:10:00.000Z","how":"click","result":"approved"}}

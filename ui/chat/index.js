@@ -26,13 +26,14 @@ import { foldRewound, RewoundGroup } from './rewound.js';
 import { agentsRunningOf, agentsLabel } from '../lib/session-status.js';
 import { UserActions, ActsMenu, EditBox, ActionHost, ActBtn, plainText, useLongPress, editing, actsOpen } from './actions.js';
 import { RestartNote } from './restart-note.js'; // lane restart: what the last Helm restart cut off here, with Continue
+import { isTeamCard, teamUnit, SeedLine } from './team-cards.js';   // Positions: Ask / Asked-by / Answer / Proposal cards (never folded into a tool group)
 
 const PAGE = 150;
 const isAgent = (n) => n === 'Agent' || n === 'Task';
 const lightbox = signal(null);
 
 // ---------------- build render units ----------------
-function build(items, session, limit, hasMore = false) {
+export function build(items, session, limit, hasMore = false) {
   const sid = session?.id || '_';
   const agentIds = new Set();
   for (const it of items) if (it.type === 'tool' && isAgent(it.name)) agentIds.add(it.toolUseId);
@@ -63,7 +64,7 @@ function build(items, session, limit, hasMore = false) {
   };
   vis.forEach((it, idx) => {
     const live = busy && idx > lastResult;
-    if (it.type === 'tool' || (it.type === 'thinking' && run)) {
+    if ((it.type === 'tool' && !isTeamCard(it)) || (it.type === 'thinking' && run)) {
       if (!run) run = { items: [], live };
       run.items.push(it); run.live = live;
     } else { flush(); units.push({ kind: 'item', item: it, live, next: vis[idx + 1] }); }
@@ -237,8 +238,10 @@ function Unit({ u, sid, cwd, ro, onRetry, agents }) {
   if (u.kind === 'rewound') return html`<${RewoundGroup} u=${u} sid=${sid} renderUnit=${(x) => html`<${Unit} key=${x.kind === 'group' ? 'g' + x.id : x.item.id} u=${x} sid=${sid} cwd=${cwd} ro=${ro} onRetry=${onRetry} />`} />`;
   if (u.kind === 'group') return html`<${ToolGroup} g=${u} sid=${sid} cwd=${cwd} />`;
   const it = u.item;
+  const tc = teamUnit(it, sid);
+  if (tc) return tc;
   switch (it.type) {
-    case 'user': return html`<${UserMsg} item=${it} sid=${sid} ro=${ro} />`;
+    case 'user': return it.seed && !it.origin ? html`<${SeedLine} item=${it} /><${UserMsg} item=${it} sid=${sid} ro=${ro} />` : html`<${UserMsg} item=${it} sid=${sid} ro=${ro} />`;   // Positions: a fresh chat's seed line
     case 'assistant': return html`<${AssistantMsg} item=${it} />`;
     case 'thinking': return html`<${Thinking} item=${it} sid=${sid} dur=${u.next ? u.next.ts - it.ts : 0} />`;
     case 'tool': return html`<div class="tsolo"><${ToolRow} item=${it} cwd=${cwd} sid=${sid} desc=${isAgent(it.name) ? descendants(it.toolUseId) : undefined} /></div>`;

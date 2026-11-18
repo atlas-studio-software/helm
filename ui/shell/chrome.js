@@ -10,7 +10,8 @@ import { UpdateChip } from './update.js';   // lane restart
 import { TabStrip } from './tabs.js';   // lane tabs
 import { LayoutSwitch } from './layout-switch.js';   // lane quad: 1 / 2 / 4 corners
 import { useLayoutEffect } from 'preact/hooks';   // lane looksync: Background's lined-up layer
-import { signal } from '@preact/signals';
+import { signal, computed } from '@preact/signals';
+import { teamList } from '../positions/state.js';   // lane T10: the Team rail button's badge (team.list needsYou)
 import { lineUp, blurKey, blurPlan } from '../lib/bg-placement.js';
 import { topRowSource, topRowUpdate } from './toprow.js';   // lane helm-toprow-hints: Mantle's top bar
 import { pinToast } from '../lib/store.js';   // lane plainerror: opening Details keeps the toast
@@ -223,6 +224,14 @@ export function Background() {
   </div>`;
 }
 
+// Positions (lane T10, spec 10.1): how many things in the team wait on the user (pending access requests +
+// proposals + needs-you inbox lines, summed over companies from team.list). 0 while Positions is off or unread.
+export const teamNeedsYou = computed(() => {
+  const l = teamList.value;
+  if (!l || !l.enabled || l.rootProblem) return 0;
+  return (l.companies || []).reduce((n, c) => n + Math.max(0, Number(c && c.needsYou) || 0), 0);
+});
+
 function RailBtn({ icon, label, on, onClick, badge, badgeKind, keys }) {
   return html`<button class=${cx('rail-btn', on && 'on')} aria-label=${label} aria-current=${on ? 'page' : undefined}
       data-tip=${keys ? `${label}  ${keys}` : label} data-tip-pos="right" onClick=${onClick}>
@@ -242,6 +251,8 @@ export function Rail() {
       onClick=${() => { if (v === 'session') toggleSidebar(); else { go('session'); sidebarOpen.value = true; } }}
       badge=${waitingCount.value || null} badgeKind="warn" />
     <${RailBtn} icon="deck" label="Deck" on=${v === 'deck'} keys=${`${mod}+Shift+D`} onClick=${() => (v === 'deck' ? goBack() : go('deck'))} />
+    <${RailBtn} icon="users" label="Team" on=${v === 'team'} keys=${`${mod}+Shift+T`} onClick=${() => (v === 'team' ? goBack() : go('team'))}
+      badge=${teamNeedsYou.value || null} badgeKind="warn" />
     <${RailBtn} icon="history" label="History" on=${v === 'history'} keys=${`${mod}+H`} onClick=${() => (v === 'history' ? goBack() : go('history'))} />
     <${RailBtn} icon="queue" label="Queue" on=${queueOn} badge=${activeQueue || null}
       onClick=${() => { go('session'); showPanel('queue', { toggle: true }); }} />

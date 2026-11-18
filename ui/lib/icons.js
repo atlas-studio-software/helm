@@ -119,13 +119,16 @@ const P = {
   'circle-dot': '<circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>',
   // Deck (every session as a tile): a 2x2 grid of rounded tiles (lane deck)
   deck: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
+  // Team (Positions, lane T10): two people, the one in front a full head and shoulders, the one behind a half
+  // outline (Lucide 'users' shapes on the same 24 grid, so it reads at 19 px in the rail like the others)
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   // Helm's mark: an eight-spoke ship's wheel (rim, hub, spokes running past the rim to handles)
   helm: '<path fill="currentColor" stroke="none" d="M14.461 4.887A7.526 7.526 0 0 1 14.461 19.113V13.882H9.539V19.113A7.526 7.526 0 0 1 9.539 4.887V10.118H14.461ZM14.461 1.279A11 11 0 0 1 14.461 22.721V20.63A8.974 8.974 0 0 0 14.461 3.37ZM9.539 22.721A11 11 0 0 1 9.539 1.279V3.37A8.974 8.974 0 0 0 9.539 20.63Z"/>',   // the split round H (ui/assets/mark.svg)
 };
 
 // Aliases: the names other lanes may reach for.
 const ALIAS = {
-  sessions: 'message', chat: 'message', agents: 'fleet', usage: 'gauge',
+  sessions: 'message', chat: 'message', agents: 'fleet', usage: 'gauge', team: 'users',
   send: 'arrow-up', edit: 'pencil', brain: 'thinking', tool: 'wrench', warning: 'alert',
   close: 'x', undo: 'rewind', 'external-link': 'external', 'more-horizontal': 'more',
   'square-slash': 'slash', smartphone: 'phone', mcp: 'server', todo: 'list-todo', branch: 'git-branch',
