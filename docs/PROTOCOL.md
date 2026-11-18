@@ -1601,6 +1601,35 @@ use, who cuts it: `{ "<key>": "<id>" }`.
 - Example: `{ "tools:WebFetch": "legal", "read:C:/Users/you/finance": "company", "bash": "legal" }`.
 - Empty `{}` when nothing is cut, and for a retired position.
 
+### Departments (lane positions-depts, 2026-11-18)
+
+A department is the optional `department` field (one line, at most 60 characters) on a position with `parent: null`,
+its head (POSITIONS.md 2.4 and 6.6). Staff never store it; a position's department is its top-level ancestor's.
+`null`, `""` or absent = none (Helm drops the key); on a position with a parent it is a validation error. Names are
+unique per company, case-insensitively. Every field below is additive and absent when there is nothing to say, so a
+company without departments looks exactly as before.
+- `position.json` (and `team.position`'s `position`): `department?: string`, on a head only.
+- `team.get` `tree` rows: `department?: "Legal"` and `departmentHead?: "legal"` (the head's id) on every position in
+  a department, the head included.
+- Proposals (the `team` item's `proposal`, `team.get`, `team.proposals`, `team.proposal.updated`):
+  - `names: { "<id>": "<name>" }`: every position id the card mentions (target, parent, old and new parent, head,
+    retired reports), so a card shows real names, never an id turned into words.
+  - `deptChange?: { kind: "new" | "rename" | "close" | "move" | "join", name, from?, head, headName }`. `new`,
+    `rename` and `close` change a head's `department` (`from` is the old name on `rename`, and on `move` the
+    department left; `name` is the new or current one). `move`: a re-parent that changes the department, with
+    `from: null` when it comes from no department and `name` / `head` / `headName` null when it leaves every
+    department (never both). `join`: a create under a department (the card shows "In Legal"). `head` /
+    `headName`: the department's head.
+  - `diff.department?: { from, to }` on an edit (either side may be `null`).
+  - `title` follows POSITIONS.md 6.6 ("New department: Legal, headed by General Counsel", "Rename department: Legal
+    to Legal & Compliance", "Close department: Legal", "Move Tax Specialist from Legal to Finance", a head's retire
+    ending "; the Legal department closes").
+- `team_propose` (MCP): `department?: string | null`, CEO only (a position calling with it is refused). Import files
+  (`team.proposals.import`) take it in the same place.
+- `team_roster` (MCP): each entry has `department?` and `head?: true`; the CEO's result also has `departments: [{
+  name, head, headName, staff }]` (`staff`: the positions under the head).
+- `request` items, `kind: "access"`: `access.names?: { "<ancestorId>": "<name>" }` for the ids in `ancestors`.
+
 ### Events
 
 | event | data |

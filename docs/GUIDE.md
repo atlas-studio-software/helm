@@ -415,7 +415,8 @@ an org tree under the CEO. It is off until you turn it on.
 - A position's **name is a real job title**: what that person would be called at a real company (General Counsel,
   Controller, Marketing Manager, Business Development Representative, Tax Specialist), never a topic or department
   label ("Legal", "Money & Paperwork", "Leads & Outreach"). The remit says what it covers. The CEO and managers are
-  told this, and a card whose name looks like a bare department label carries a note saying so.
+  told this, and a card whose name looks like a bare department label carries a note saying so. A label like
+  "Legal" belongs in a **department** instead (below).
 - A proposal is a **proposal card**: the title ("New position: Tax Specialist under General Counsel"), remit, scope, powers
   (anything beyond the manager in red: it is cut when you approve), duties in words, the brief (folded) and the
   files it would read first. A change shows what is added and removed.
@@ -435,6 +436,31 @@ an org tree under the CEO. It is off until you turn it on.
   questions can't be retired until they settle.
 - A new position with starting files reads them once and notes what matters to its job.
 
+### Departments
+
+- A position's name is its job (General Counsel); a **department** is the group it works in (Legal, Finance,
+  Marketing, Business Development…). A department is not a chat and not a position: it is a label on one position
+  that reports to the CEO, its **head**. General Counsel heads Legal.
+- Everyone under the head is in that department; you never set it on staff. A position can also be outside any
+  department: one that reports to the CEO with no department, and its reports.
+- Each name is used once per company. A head always reports to the CEO (no departments inside departments).
+- Departments change through proposal cards, like positions, and only the CEO (or an import file) proposes them:
+  - **New department: Legal, headed by General Counsel**: a new position reporting to the CEO with a department,
+    or a department added to an existing one.
+  - **Rename department: Legal to Legal & Compliance**.
+  - **Close department: Legal**: the head and its staff stay, now outside any department.
+  - **Move Tax Specialist from Legal to Finance**: it now reports to Finance's head, and its powers are cut to fit
+    under that head, as for any move.
+  - Retiring a head moves its reports to the CEO, and its card says "the Legal department closes".
+  - A new position in a department keeps its usual title and shows "In Legal".
+- In the Team view a company with departments is grouped: a header per department (its name, its head, how many
+  positions, the head included) above the head and everyone under it, then **No department** for the rest. A position's **Overview** says
+  "Heads Legal" or "Legal (head: General Counsel)". With no departments the view looks as before.
+- The CEO sees its reports grouped by department; staff know which department they are in, and a head knows it
+  heads one.
+- In an import file, a head's item has `"parent": null` and `"department": "Legal"`; its staff items name the head
+  as `parent` and carry no department.
+
 ### Import proposals from a file
 
 If you drafted a team elsewhere, load it as open proposal cards instead of asking for each one in chat:
@@ -449,7 +475,7 @@ node tools/team-import-proposals.js <file.json> [--dry-run] [--port N] [--user-d
 - The file is JSON: `"kind": "helm-team-proposals"`, the `company` id, and a `proposals` list. Each item has a
   `team_propose` object with an `action` (`create`, `edit` or `retire`), a `why` (one or two lines for the card)
   and the same fields a chat proposal takes (`name`, `parent`, `remit`, `scope`, `powers`, `duties`,
-  `brief`…; `edit` and `retire` need the position's `id`). An item may also carry a `ref` (a label for the output),
+  `brief`, `department`…; `edit` and `retire` need the position's `id`). An item may also carry a `ref` (a label for the output),
   a `status` (only `pending` items load) and a `notebook_md` to start a new position's notebook with.
 - `--dry-run` only reads the file; Helm need not be running. It prints `company: <id>`, one `ok` line per item that
   would load (`ok    legal: create legal "General Counsel" parent=(CEO)`), one `skip` line with the reason for each item that

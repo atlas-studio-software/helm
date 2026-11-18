@@ -61,6 +61,7 @@ In this file "you" and "the owner" mean the person running Helm. Examples use th
 | CEO session | any Helm session (not a position) whose cwd is inside one of the company's folders (section 3). |
 | position | one role on the team: `position.json` + `brief.md` + `notebook.md` + its chats. |
 | manager / reports | a position's `parent` is its manager (null = reports to the CEO). Its children are its reports. |
+| department | a named group in a company (Legal, Finance, Marketing, Business Development…). Not a session and not a position: it is the `department` field on one top-level position, its **head** (General Counsel heads Legal). Everyone under the head is in it (section 6.6). |
 | depth | top-level positions are depth 1. Cap: depth 5 (**Decided**, section 6.4). |
 | chat | one Claude conversation of a position. A position has one *current* chat and any number of ended ones. |
 | ask / ticket | one question from a manager, the CEO or a colleague to a position. `t_<id>`, persisted until settled. |
@@ -160,6 +161,11 @@ case-insensitively on Windows.
 ```
 - `id`: slug, unique within the company (live and retired), immutable. `name` may change.
 - `parent`: a live position id in the same company, or `null` (reports to the CEO).
+- `department` (optional): `"department": "Legal"`, one line, at most 60 characters. Only a position with
+  `parent: null` may carry it, and that makes it the department's **head** (General Counsel's `position.json` has
+  `"parent": null, "department": "Legal"`). On a position with a parent it is a validation error. `null`, `""` or
+  absent = no department, and Helm drops the key. Staff never store it: a position's department is its top-level
+  ancestor's (section 6.6), so the Tax Specialist above is in Legal.
 - `scope.kind`: `company` (company-wide) or `product` (`{ "kind": "product", "folder": "C:/Users/you/northwind-app" }`).
   It decides what `$scope` means in powers and which folders event duties may watch.
 - `status`: `active` | `paused` (no duties, asks refused with "paused", you can still chat) | `retired` (folder moved).
@@ -229,7 +235,8 @@ identifiers in the code; they mean you, whoever runs Helm.
 **How the roster reaches the CEO (no context bloat).** **Decided:** through the `team` MCP server only. Normal
 sessions keep their system prompt untouched, so your normal Claude Code behaviour is exactly as today.
 - Server `instructions` (surfaced as an MCP instructions block, `createSdkMcpServer({ instructions })`) carry the
-  company name, the direct reports as `name (id): remit` one per line, a count of deeper positions under each, and
+  company name, the direct reports as `name (id): remit` one per line (grouped by department when the company has
+  any, section 6.6), a count of deeper positions under each, and
   six lines of how to use the tools. About 150 to 400 tokens for a team of 6.
 - `alwaysLoad: true` on the CEO's server, so `team_ask` and `team_roster` are never deferred behind tool search.
   The CEO must be able to route without first searching for tools.
@@ -587,6 +594,7 @@ team_propose({
   parent?: "legal" | null,          // create: default = the caller (a position) or null (the CEO); edit: re-parent
   name?, remit?, scope?, brief?,    // create: required (brief = the full brief.md)
   powers?, duties?, model?, effort?,
+  department?: "Legal" | null,      // CEO only, on a position with parent null: create, rename or close a department (6.6)
   seed?: { notes?: string, files?: [{ path, why }] },   // create: facts the proposer already knows + files the new position reads on its first run
   reports_on_retire?: "move-up" | "retire-too",          // retire of a manager: default move-up (to the retiring position's manager)
   why: string                        // one or two lines shown on the card
@@ -597,8 +605,11 @@ team_propose({
   label ("Legal", "Finance", "Money & Paperwork", "Leads & Outreach"); `remit` says what it covers. The tool
   description and the recurring-topic line both say so. A create (or a rename) whose name is a bare department label
   or contains " & " is not refused: the card gets a `nameWarning` line and the tool result repeats it in its note.
+  `nameWarning` checks position names only. A department name ("Legal", "Legal & Compliance") is a label by design
+  and goes in `department` (6.6), never in `name`.
 - Helm validates first and refuses with reasons: schema, id unique, depth cap (6.4), powers ⊆ manager's (7.2),
-  folders inside the company, retire of a position with open tickets (asks it to wait), more than 10 direct reports.
+  folders inside the company, retire of a position with open tickets (asks it to wait), more than 10 direct reports,
+  a `department` on a position with a parent, a department name already in use (6.6).
 - A valid proposal becomes a **proposal card** (section 10.4) and returns at once. It is NOT blocking.
   - The note says: "The user decides on the card. You will get their decision as a Helm message. Discuss
     changes with them meanwhile; call team_propose again to replace this proposal."
@@ -662,6 +673,78 @@ team_propose({
    granted read-only for that run, and asks the position to record what matters to its remit with `notebook_add`.
 4. Notes to the proposer and to the new position's manager (if they differ), plus the roster note to live CEO chats.
 5. No chat is started until something needs the position (section 8.2).
+
+### 6.6 Departments
+
+A position's name is its job (General Counsel); a **department** is the group it works in (Legal). **Decided:**
+- A department is the `department` field (2.4) on one position with `parent: null`: its **head**. It is not a
+  session, not a position and not a file.
+- A position's department is derived: its top-level ancestor's. Staff never store it, so a staff member's
+  department is always its head's. A position can be outside any department: a top-level position with no
+  `department`, and its reports.
+- Names are unique per company (compared case-insensitively), checked at proposal and again at approval.
+- No sub-departments in this version: a head always reports to the CEO.
+
+Changes are ordinary proposals (same card, same approval, from `team_propose` or an import file):
+
+| change | proposal | card title |
+| --- | --- | --- |
+| create | `create` with `parent: null` and `department` (or `edit` a top-level position to add one) | "New department: Legal, headed by General Counsel" |
+| rename | `edit` the head's `department` | "Rename department: Legal to Legal & Compliance" |
+| close | `edit` the head with `department: null`; the head and its staff stay, now outside any department | "Close department: Legal" |
+| move a position | `edit` with `parent`: re-parent it under the other head (6.4; powers are capped as for any re-parent) | "Move Tax Specialist from Legal to Finance" |
+| retire a head | `retire` with `move-up`: its reports go to the CEO and the department closes | "Retire General Counsel; the Legal department closes" |
+
+- A `create` under a position that is in a department keeps its title ("New position: Tax Specialist under General
+  Counsel") and the card shows "In Legal".
+- Only the CEO and import files create, rename or close departments. A position proposes only under itself (6.1),
+  so it can never touch a `department` field.
+- Cards name every position they mention by its name (the `names` map, PROTOCOL.md "Positions"), never an id turned
+  into words, and show the department change in words.
+
+**The CEO's prompt** groups its direct reports by department; with no departments it is unchanged:
+
+```
+Legal department:
+- General Counsel (legal), head: <remit> · staff: Tax Specialist, Payroll Tax Specialist
+Marketing department:
+- Marketing Manager (marketing), head: <remit>
+Not in a department:
+- QA Engineer (app-qa): <remit>
+```
+
+A staff member's prompt says it works "in the Legal department"; a head's says it heads the Legal department.
+`team_roster` marks each entry's `department` and `head: true`, and the CEO's result lists `departments`.
+
+**Example.** A target shape a company might grow into:
+
+```
+CEO
+├── Business Development   head: Head of Business Development; staff: Business Development Representative
+├── Finance                head: Finance & Operations Manager
+├── Legal                  head: General Counsel
+└── Marketing              head: Marketing Manager
+```
+
+An import file (GUIDE.md, "Import proposals from a file") that creates a department head and one staff member:
+
+```json
+{
+  "kind": "helm-team-proposals",
+  "company": "northwind-goods",
+  "proposals": [
+    { "ref": "bizdev", "team_propose": { "action": "create", "id": "bizdev",
+      "name": "Head of Business Development", "parent": null, "department": "Business Development",
+      "remit": "Partnerships, wholesale leads and reseller deals for Northwind Goods.",
+      "brief": "…", "why": "Partner enquiries keep coming up and nobody owns them." } },
+    { "ref": "bdr", "team_propose": { "action": "create", "id": "bdr",
+      "name": "Business Development Representative", "parent": "bizdev",
+      "remit": "Finds and qualifies wholesale and reseller leads; drafts first outreach for review.",
+      "brief": "…", "why": "The head needs someone to work the lead list." } }
+  ]
+}
+```
+The staff item carries no `department`: it is in Business Development because its head is.
 
 ## 7. Powers
 
@@ -957,11 +1040,15 @@ Reuse map (from the UI survey; no new visual language): Deck's view scaffolding 
   - Indent is 16 px per level on desktop and 12 px on phone. Beyond depth 3 on phone the indent stops growing and
     the row shows a breadcrumb prefix ("… › Tax Specialist ›"), so 320 px never overflows.
   - Collapse state is remembered per company (`helm.team.open.<company>`).
+  - **Departments** (6.6): when the company has any, the tree is grouped. Each department gets a header row (its
+    name, its head, a position count, the head included: "Legal  headed by General Counsel  3 positions"; the phone shows the number only) followed by the head and its subtree; then
+    a "No department" header with the rest. With no departments the tree is unchanged.
 - **Desktop ≥ 1100 px:** two panes, tree left (min 320 px) and the selected position's detail right. Narrower
   desktop and phone: the tree is full width, and tapping a row opens the detail as its own screen with a back
   button.
 - **Detail**, a `.seg` of sections:
-  - **Overview**: remit, manager (link), reports (links), status, model, [Open chat], [Run duty ▾], [Pause] or
+  - **Overview**: remit, manager (link), reports (links), a Department line when it is in one ("Heads Legal" on the
+    head, "Legal (head: General Counsel)" on its staff), status, model, [Open chat], [Run duty ▾], [Pause] or
     [Resume]. Pause is operational and not a definition change, so it needs no proposal.
   - **Brief**: FileView-style view/edit of `brief.md`. Save writes it and logs an inbox line "Brief edited by you".
   - **Notebook**: same editor for `notebook.md`. Open items render as checkboxes in view mode; ticking one edits
@@ -997,7 +1084,11 @@ today's requests.
   ("Fresh chat · seeded from notebook + handoff of chat 3").
 - **Answer card** (late answers after Stop, 5.5): "General Counsel answered after you stopped" with [Show] [Send to CEO].
 - **Proposal card**: title ("New position: Tax Specialist under General Counsel" | "Change General Counsel" | "Retire Contracts Manager" | "New
-  company: Northwind Goods").
+  company: Northwind Goods"; department changes as in 6.6: "New department: Legal, headed by General Counsel",
+  "Rename department: Legal to Legal & Compliance", "Close department: Legal", "Move Tax Specialist from Legal to
+  Finance", a head's retire ending "; the Legal department closes").
+  - Positions are named by name everywhere on the card, never an id turned into words. A create in a department
+    shows "In Legal"; any department change is spelled out in words.
   - Body: remit, scope, powers as chips (with any excess over the manager in `.chip.danger`), duties in words, the
     brief under a disclosure (Markdown), and seed files.
   - An edit proposal shows a diff (brief text diff; powers and duties as added and removed chips).
@@ -1151,6 +1242,10 @@ Tree decisions:
 - Effective powers = own ∩ every ancestor's. "Approve always" beyond the manager says which ancestors it widens.
 - Access requests from any level go to you; managers cannot grant.
 - Re-parenting is an edit proposal. Retiring a manager moves its reports up by default.
+- A department is a field on its head (`department` on a top-level position), not a separate file. One optional
+  field; no new action, tool or file; a staff member's department is derived from its head, so the two can never
+  disagree; moving a position between departments is a re-parent, with its usual power capping; companies without
+  the field load unchanged.
 
 Open questions for the owner (each has a default that ships if nobody decides otherwise):
 1. **Connectors.** Should any position ever reach your claude.ai connectors (mail drafts for the Marketing Manager, a calendar,

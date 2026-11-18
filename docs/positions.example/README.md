@@ -13,7 +13,7 @@ northwind-goods/
   inbox.jsonl                  duty reports and flags for the owner
   duty-runs.jsonl              every duty run
   positions/
-    legal/                     General Counsel (reports to the CEO)
+    legal/                     General Counsel (reports to the CEO; heads the Legal department)
       position.json            name, remit, parent, scope, powers, duties, version
       brief.md                 the job description (goes in the position's system prompt)
       notebook.md              the position's memory: Decisions / Facts / Open items / Log
@@ -21,8 +21,8 @@ northwind-goods/
       work/drafts/             its drafts and outputs
     tax/                       Tax Specialist (reports to General Counsel)
     payroll-tax/               Payroll Tax Specialist (reports to Tax Specialist): the third level
-    marketing/                 Marketing Manager (reports to the CEO; a release duty that drafts, never posts)
-    app-qa/                    QA Engineer (a paused coding position scoped to the app, in its own worktree)
+    marketing/                 Marketing Manager (reports to the CEO; heads Marketing; a release duty that drafts, never posts)
+    app-qa/                    QA Engineer (a paused coding position scoped to the app, in its own worktree; no department)
   retired/                     retired positions are moved here unchanged
 ```
 
@@ -35,6 +35,20 @@ CEO (any Helm session in a company folder)
 │       └── Payroll Tax Specialist
 ├── Marketing Manager
 └── QA Engineer (paused)
+```
+
+Departments (`docs/POSITIONS.md` 6.6): `legal/position.json` carries `"department": "Legal"` and
+`marketing/position.json` carries `"department": "Marketing"`, so General Counsel heads Legal (Tax Specialist and
+Payroll Tax Specialist are in it through their head; they store no department) and Marketing Manager heads
+Marketing. QA Engineer is outside any department. Team view shows it grouped:
+
+```
+Legal · General Counsel · 3 people
+  General Counsel > Tax Specialist > Payroll Tax Specialist
+Marketing · Marketing Manager · 1 person
+  Marketing Manager
+No department
+  QA Engineer (paused)
 ```
 
 A real team root also has `README.md` and `house-rules.md` at the top, which Helm writes once.
