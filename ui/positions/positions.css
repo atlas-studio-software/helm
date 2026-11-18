@@ -624,7 +624,8 @@ html[data-theme="light"] .pos-textarea { background: var(--surface-2); }
 .pos-n .icon { flex: none; }
 .pos-n.warn { color: var(--warn); background: var(--warn-soft); }
 .pos-n.danger { color: var(--danger); background: var(--danger-soft); }
-.pos-item-chat {
+/* .pos-item > .icon-btn: beats components.css's touch rule that makes every .icon-btn.sm position: relative */
+.pos-item > .icon-btn.pos-item-chat {
   position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
   opacity: 0; color: var(--text-2);
   transition: opacity var(--dur) var(--ease);
@@ -639,7 +640,7 @@ html[data-theme="light"] .pos-textarea { background: var(--surface-2); }
 }
 @media (hover: none), (pointer: coarse) {
   .pos-item.has-chat { padding-right: 34px; }
-  .pos-item-chat { right: 4px; width: 30px; height: 30px; opacity: 0.8; }
+  .pos-item > .icon-btn.pos-item-chat { right: 4px; width: 30px; height: 30px; opacity: 0.8; }
   .pos-item.has-chat:hover .pos-item-ns { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {

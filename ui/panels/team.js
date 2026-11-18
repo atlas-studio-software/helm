@@ -1,7 +1,8 @@
 // Owner: lane team-panel. The right sidebar's Team panel (Positions; spec docs/POSITIONS.md 10): the current company's
 // org tree, one line a row, so any position is one click away from a session.
-//   Top: the company (a switcher only with more than one), its counts ("2 need you · 1 working") and a button to the
-//   full Team view.
+//   Top: the company (a switcher only with more than one; an option names what needs you only for the OTHER companies)
+//   and a button to the full Team view; under it, on a line of its own that wraps rather than truncates, the
+//   company's counts ("2 need you · 1 working").
 //   Tree: the CEO row (a click opens a CEO chat, as the Team view's "Talk to the CEO" does), then each department as a
 //   header ("Legal · headed by General Counsel") with its head and staff nested under it, then the positions in no
 //   department. Each row: chevron, status dot, name, Paused, the counts that need you (access requests, proposals).
@@ -47,12 +48,13 @@ export function chatRow(cid, id) {
 
 function Counts({ c }) {
   if (c.needsYou > 0 || c.working > 0) {
-    return html`<span class="pn-team-counts tnum">
+    return html`<p class="pn-team-counts tnum" data-act="team-counts">
       ${c.needsYou > 0 && html`<span class="pn-team-count warn"><span class="dot waiting" aria-hidden="true"></span>${c.needsYou} need${c.needsYou === 1 ? 's' : ''} you</span>`}
+      ${c.needsYou > 0 && c.working > 0 && html`<span class="pn-team-sep" aria-hidden="true">·</span>`}
       ${c.working > 0 && html`<span class="pn-team-count"><span class="dot working" aria-hidden="true"></span>${c.working} working</span>`}
-    </span>`;
+    </p>`;
   }
-  return html`<span class="pn-team-counts">${countsText(c)}</span>`;
+  return html`<p class="pn-team-counts" data-act="team-counts">${countsText(c)}</p>`;
 }
 
 export function TeamPanel() {
@@ -108,14 +110,15 @@ export function TeamPanel() {
     ${head && html`<div class="pn-bar pn-team-bar">
       ${cos.length > 1
         ? html`<select class="select pn-team-co" aria-label="Company" data-act="team-company" value=${cid} onChange=${(e) => setCompany(e.currentTarget.value)}>
-            ${cos.map((c) => html`<option key=${c.id} value=${c.id}>${c.name}${c.needsYou > 0 ? ` · ${c.needsYou} need${c.needsYou === 1 ? 's' : ''} you` : ''}</option>`)}
+            ${cos.map((c) => html`<option key=${c.id} value=${c.id}>${c.name}${c.id !== cid && c.needsYou > 0 ? ` · ${c.needsYou} need${c.needsYou === 1 ? 's' : ''} you` : ''}</option>`)}
           </select>`
         : html`<span class="pn-strong pn-team-name truncate" title=${co?.name || ''}>${co?.name || cid}</span>`}
-      <span class="pn-bar-grow">${data && html`<${Counts} c=${companyCounts(data.tree, co?.needsYou)} />`}</span>
+      <span class="grow"></span>
       <button type="button" class="icon-btn pn-team-open" data-act="team-open" title="Open the Team view (Ctrl+Shift+T)" aria-label="Open the Team view" onClick=${openTeam}>
         <${Icon} name="users" size=${15} />
       </button>
     </div>`}
+    ${head && data && html`<${Counts} c=${companyCounts(data.tree, co?.needsYou)} />`}
     ${body}
   </div>`;
 }

@@ -141,18 +141,30 @@ async function pageMain() {
         return true;
       }, 8000, 'the Team panel (.insp .pn-team, no loading state)');
       if (!shell.isPhone.value) {
-        // the default 360 px column holds every tab, whichever is open (the longest labels: Changes, Railway, Preview)
-        const strip = document.querySelector('.insp-tabs');
-        const over = [];
-        for (const id of ['changes', 'railway', 'team']) {
-          panels.inspectorPanel.value = id;
-          await frames();
-          const d = strip.scrollWidth - strip.clientWidth;
-          if (d > 0) over.push(`${id} open: ${d} px`);
+        // every tab fits the column (no sideways scroll) and every count badge stays inside its own tab: at the default
+        // 360 px and the 280 px minimum, with the longest labels open (Changes, Railway, Preview) and Team
+        const strip = () => document.querySelector('.insp-tabs');
+        const bad = [];
+        const w0 = shell.inspectorWidth.value;
+        for (const w of [360, 280]) {
+          shell.inspectorWidth.value = w;
+          for (const id of ['changes', 'railway', 'team']) {
+            panels.inspectorPanel.value = id;
+            await frames();
+            const el = strip();
+            const d = el.scrollWidth - el.clientWidth;
+            if (d > 0) bad.push(`${w} px, ${id} open: overflows by ${d} px`);
+            for (const b of el.querySelectorAll('.insp-tab-badge')) {
+              const t = b.closest('.insp-tab').getBoundingClientRect(), r = b.getBoundingClientRect();
+              if (r.left < t.left - 0.5 || r.right > t.right + 0.5) bad.push(`${w} px, ${id} open: the ${b.closest('.insp-tab').title} badge leaves its tab`);
+            }
+          }
         }
+        shell.inspectorWidth.value = w0;
         panels.inspectorPanel.value = 'team';
+        await frames();
         await waitFor(() => document.querySelector('.insp .pn-team [role="tree"]') || !T.companies.value[T.companyId.value]?.data, 4000, 'the Team panel again');
-        if (over.length && document.querySelector('.insp-col')?.getBoundingClientRect().width >= 352) console.error(`positions-preview: the inspector tab strip overflows its ${Math.round(strip.clientWidth)} px (${over.join(', ')})`);
+        if (bad.length) console.error(`positions-preview: the inspector tab strip: ${bad.join('; ')}`);
       }
     } else if (mode === 'loading') {
       await waitFor(() => document.querySelector('.pos-view .spinner'), 4000, 'the loading spinner');

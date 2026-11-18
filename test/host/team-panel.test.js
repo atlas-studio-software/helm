@@ -139,6 +139,17 @@ test('the panel draws the company tree from the mock: CEO row, then each departm
   assert.ok(sw, 'a company switcher');
   assert.deepEqual(ui.findAll((n) => n.t === 'option', sw.c).map((o) => o.p.value), LIST.companies.map((c) => c.id));
   assert.equal(sw.p.value, 'example-co');
+  // each count once: the current company's option is its name only; the counts are a line of their own under the bar
+  const opts = ui.findAll((n) => n.t === 'option', sw.c);
+  assert.equal(ui.text(opts[0]), 'Example Co');
+  const counts = ui.findAll(ui.byAct('team-counts'));
+  assert.equal(counts.length, 1);
+  const need = LIST.companies[0].needsYou;
+  assert.ok(need > 0);
+  assert.match(ui.text(counts[0]), new RegExp(`^${need} needs? you`));
+  const bar = ui.findAll((n) => has(n, 'pn-team-bar'))[0];
+  assert.doesNotMatch(ui.text(bar), /need/, 'the bar itself carries no count');
+  assert.ok(!(ui.findAll((n) => has(n, 'pn-team-bar'))[0].c || []).some((k) => k && k.p && k.p['data-act'] === 'team-counts'), 'the counts are not inside the bar');
 });
 
 test('one company: no switcher, its name instead; no departments: rows as the CEO lists them, no extra step', async (t) => {
@@ -147,6 +158,7 @@ test('one company: no switcher, its name instead; no departments: rows as the CE
   await ui.settle();
   assert.equal(ui.findAll(ui.byAct('team-company')).length, 0);
   assert.match(ui.text(ui.findAll((n) => has(n, 'pn-team-name'))[0]), /Example Co/);
+  assert.equal(ui.findAll(ui.byAct('team-counts')).length, 1, 'one company: its name, and the counts under it');
   render({ companyId: 'harbor-books', companies: { 'harbor-books': { data: HARBOR } } });
   await ui.settle();
   assert.deepEqual(ids(), ['@ceo', ...HARBOR.tree.map((r) => r.id)]);

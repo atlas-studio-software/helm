@@ -23,10 +23,13 @@
   padding: var(--space-2);
   border-bottom: 1px solid var(--hairline);
 }
-/* Tab strip. Eight tabs fit the default 360px column: the open tab is a labelled pill, the rest are
-   27px icon-only tabs with their count tucked onto the icon; below 352px every tab is an icon. Narrower
-   than ~290px (the column dragged towards its 280px minimum) it scrolls sideways, no scrollbar:
-   index.js keeps the open tab in view and sets data-more so a soft fade shows which side has more. */
+/* Tab strip. The open tab is a labelled pill, the rest are icon-only tabs with their count tucked onto
+   the icon's corner; below 352px every tab is an icon. The strip fits by flexing, not by fixed widths: an
+   icon tab is 29px when there is room and gives way down to 24px; only then does the open tab's label
+   shorten (ellipsis). Eight tabs fit every column width from the 280px minimum up, the badge stays inside
+   its own tab (anchored to the tab's corner), and the wide column's labels shorten the same way. If a
+   future tab still cannot fit, the strip scrolls sideways, no scrollbar: index.js keeps the open tab in
+   view and sets data-more so a soft fade shows which side has more. */
 .insp-tabs {
   display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0;
   overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain;
@@ -39,7 +42,8 @@
 .insp-tabs[data-more~="left"] { --fade-l: 20px; }
 .insp-tabs[data-more~="right"] { --fade-r: 20px; }
 .insp-tab {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none;
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 0 1 auto;
   height: 30px; min-width: 30px; padding: 0 8px;
   border: 1px solid transparent; border-radius: var(--radius-s);
   background: transparent; color: var(--text-2);
@@ -56,9 +60,9 @@
 .insp-head-actions { display: flex; gap: 2px; flex: none; }
 /* normal column: only the open tab keeps its label; counts move onto the icon's corner */
 @container insp (max-width: 700px) {
-  .insp-tabs { gap: 0; }
-  .insp-tab { gap: 5px; padding: 0 7px; }
-  .insp-tab:not(.on) { padding: 0 5px; min-width: 27px; }
+  .insp-tabs { gap: 1px; }
+  .insp-tab { gap: 5px; padding: 0 7px; min-width: 36px; }
+  .insp-tab:not(.on) { flex: 1 1 0; min-width: 24px; max-width: 29px; padding: 0; }
   .insp-tab:not(.on) .insp-tab-label { display: none; }
   .insp-tab-ico { display: inline-grid; place-items: center; position: relative; }
   .insp-tab .insp-tab-badge {
@@ -66,10 +70,15 @@
     min-width: 13px; height: 13px; padding: 0 3px;
     font-size: var(--fs-3xs); box-shadow: 0 0 0 1px var(--hairline);
   }
+  /* an icon-only tab can be 24px: its count sits in the tab's own top-right corner, never on the next tab */
+  .insp-tab:not(.on) .insp-tab-ico { position: static; }
+  .insp-tab:not(.on) .insp-tab-badge { top: 1px; right: 1px; left: auto; }
 }
 @container insp (max-width: 352px) {
   .insp-tab .insp-tab-label { display: none; }
-  .insp-tab, .insp-tab:not(.on) { padding: 0 5px; min-width: 27px; }
+  .insp-tab, .insp-tab:not(.on) { flex: 1 1 0; min-width: 24px; max-width: 29px; padding: 0; }
+  .insp-tab .insp-tab-ico { position: static; }
+  .insp-tab .insp-tab-badge, .insp-tab:not(.on) .insp-tab-badge { top: 1px; right: 1px; left: auto; }
   .insp-tabs { gap: 0; }
   .insp .insp-head { padding-left: var(--space-1); padding-right: var(--space-1); }
 }
@@ -882,11 +891,16 @@
 
 /* ---------- team (lane team-panel): the company's org tree (team.js; the rows are positions.css .pos-item) ---------- */
 .pn-team-bar { gap: var(--space-2); }
-.pn-team-co { flex: 0 1 auto; min-width: 0; max-width: 60%; height: 30px; font-size: var(--fs-xs); }
-.pn-team-name { flex: 0 1 auto; min-width: 0; max-width: 60%; font-size: var(--fs-s); }
-.pn-team-counts { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-3); white-space: nowrap; }
-.pn-team-count { display: inline-flex; align-items: center; gap: 5px; }
+.pn-team-co { flex: 0 1 auto; min-width: 0; max-width: calc(100% - 40px); height: 30px; font-size: var(--fs-xs); }
+.pn-team-name { flex: 0 1 auto; min-width: 0; font-size: var(--fs-s); }
+/* the counts: a line of their own under the bar; they wrap, never truncate */
+.pn-team-counts {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-2); margin: 0;
+  padding: var(--space-2) var(--space-3) 0; color: var(--text-3); font-size: var(--fs-xs); line-height: 18px;
+}
+.pn-team-count { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .pn-team-count.warn { color: var(--warn); }
+.pn-team-sep { color: var(--text-3); }
 .pn-team-open { margin-right: -6px; }
 .pn-team-tree { padding: var(--space-2) var(--space-2) var(--space-5); }
 .pn-team-act { margin-top: var(--space-3); }
