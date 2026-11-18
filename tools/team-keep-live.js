@@ -5,7 +5,7 @@
 // throwaway profile, the way main.js restarts (engine.shutdown({ cause: 'restart' }) with keeping on, then a new
 // engine on the same userData re-attaches what the broker kept).
 //
-//   node tools/team-keep-live.js [--model=claude-haiku-5-5] [--keep] [--step-s=240] [--verbose]   (a few cents)
+//   node tools/team-keep-live.js [--model=claude-haiku-5-5] [--keep] [--no-keep] [--step-s=240] [--verbose]   (a few cents)
 //
 // A throwaway world under the OS temp dir (helm-team-keep-*): Helm's userData, a team root, a company folder and an
 // "outside" folder the position may not read. Never the owner's Helm profile. The position's answer needs a trail of
@@ -21,6 +21,15 @@
 //       position's re-initialize with hooks_applied true
 //   e   the position's guard still denies a Read outside its area after the re-attach
 //   f   a follow-up to the CEO runs on the same CLI pid
+// --no-keep: "Keep sessions running through a restart" OFF (engine option detach: false), so the restart ends both
+// CLIs. Then, instead of b..f (docs/POSITIONS.md 5.5 "Without keep, each question still reaches the answerer once"):
+//   b   both CLIs ran (not keepable); shutdown({ cause: 'restart' }) ended both and left restart notes
+//   c   engine B: Positions running; the CEO is continued ("Continue where you left off") at once, while the
+//       position's cut-off answer is resumed by recovery
+//   d   one ticket; the question reached the position once (one full <helm-ask>, any resume is a note only, one
+//       first delivery in the cross-talk log); the CEO's reply has the token (by re-joining its open ticket in-call,
+//       or as a late answer)
+//   (--keep here keeps the temp world for a look; it is not the setting)
 // Run it from PowerShell or a normal terminal, not Git Bash: a shell whose Windows job forbids breakaway keeps the
 // broker in that job, Helm then counts no CLI as keepable (broker-launch.js jobSafe) and b1 fails saying so.
 // Then engine B shuts down normally (the broker ends the CLIs and exits), leftovers are stopped by PID, the temp world
@@ -37,6 +46,7 @@ const MODEL = typeof argv.model === 'string' ? argv.model : 'claude-haiku-5-5';
 const STEP_MS = (Number(argv['step-s']) > 0 ? Number(argv['step-s']) : 240) * 1000;
 const TOTAL_MS = 12 * 60_000;
 const KEEP = !!argv.keep;
+const NO_KEEP = !!argv['no-keep']; // the setting "Keep sessions running through a restart" off
 const TRAIL = 5;
 const tag = () => crypto.randomBytes(3).toString('hex').toUpperCase();
 const HOME_RE = new RegExp([os.homedir(), os.homedir().replace(/\\/g, '/')].map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
@@ -126,7 +136,7 @@ function startEngine(name) {
     emit: () => {},
     log: (lvl, msg) => { logLines.push(`${lvl} [${name}] ${msg}`); if (logLines.length > 600) logLines.shift(); if (argv.verbose) console.log(`  [${name}] ${lvl} ${oneLine(msg, 300)}`); },
     statuslineDir: W.statusline, external: false, etaDir: false, prewarmSdk: false, usageSampling: false,
-    detach: true, // "Keep sessions running through a restart" on; broker: the real broker-client.js (default)
+    detach: !NO_KEEP, // "Keep sessions running through a restart" on (off with --no-keep); broker: the real broker-client.js (default)
     getIdleCloseMs: () => 0,
     team: { settings: () => ({ enabled: true }), root: () => W.teamRoot, rootProblem: () => null },
   });
@@ -248,6 +258,7 @@ async function main() {
   const ceoPidA = pidOf(ceoA), posPidA = pidOf(pesA);
   const ticketA = ask.team && ask.team.ticket;
   const posDoneReads = pesA.items.filter((it) => it.type === 'tool' && it.name === 'Read' && /ledger-\d/.test(str(it.input)) && it.status !== 'running').length;
+  if (NO_KEEP) return noKeepRestart({ q, ceoA, pesA, ask, ticketA, readsAtRestart, posDoneReads });
   const ks = await noteBrokers();
   check('b1', !!(ceoA.brokerProc && pesA.brokerProc && ceoPidA && posPidA && ceoA.canKeep() && pesA.canKeep()), 'engine A: both CLIs run in the broker and can be kept',
     `CEO pid ${ceoPidA} (broker ${!!ceoA.brokerProc}), position pid ${posPidA} (broker ${!!pesA.brokerProc}); canKeep CEO ${ceoA.canKeep()}, position ${pesA.canKeep()}; broker job safe ${ks ? ks.safe : '?'}${ks && ks.job && ks.job.note ? ` (${ks.job.note})` : ''}`);
@@ -318,6 +329,59 @@ async function main() {
   // ---- f: a follow-up to the CEO on the same CLI
   const f1 = await turn(ceoId, 'Reply with exactly the word PONG and nothing else. Use no tools.');
   check('f', /PONG/.test(f1.reply) && pidOf(ceoB) === ceoPidA && alive(ceoPidA), 'a follow-up to the CEO runs on the same CLI pid', `pid ${pidOf(ceoB)} (A had ${ceoPidA}); reply: ${oneLine(f1.reply, 80)}`);
+}
+
+// --no-keep: the restart ends both CLIs; each question must still reach the position once.
+async function noKeepRestart({ q, ceoA, pesA, ask, ticketA, readsAtRestart, posDoneReads }) {
+  const ceoPidA = pidOf(ceoA), posPidA = pidOf(pesA);
+  check('b1', !!(ceoPidA && posPidA && !ceoA.canKeep() && !pesA.canKeep()), 'engine A (keeping off): both CLIs run and are not keepable',
+    `CEO pid ${ceoPidA}, position pid ${posPidA}; canKeep CEO ${ceoA.canKeep()}, position ${pesA.canKeep()}`);
+  costA = cost();
+  info(`restarting: CEO team_ask ${ask.status} (ticket ${ticketA || '?'}, tool use ${ask.toolUseId || '?'}), position turn active ${pesA.turnActive}, ${readsAtRestart} ledger Read(s) started, ${posDoneReads} finished`);
+  await engine.shutdown({ cause: 'restart' });
+  await until(() => !alive(ceoPidA) && !alive(posPidA), 15_000, 'both CLIs to end with engine A').catch(() => null);
+  const noted = (es) => !!(es.s.restartNote && es.s.restartNote.working);
+  check('b2', !alive(ceoPidA) && !alive(posPidA) && noted(ceoA) && noted(pesA), 'engine A shutdown({ cause: "restart" }) ended both CLIs and noted what it cut off',
+    `CEO pid ${ceoPidA} ${alive(ceoPidA) ? 'ALIVE' : 'gone'}, restart note ${noted(ceoA)}; position pid ${posPidA} ${alive(posPidA) ? 'ALIVE' : 'gone'}, restart note ${noted(pesA)}`);
+  clearInterval(pidTimer); pidTimer = null;
+  engine = null;
+
+  // ---- c: engine B; the CEO is continued at once (it usually calls team_ask again); recovery resumes the position
+  startEngine('B');
+  await until(() => engine.team.status().running, 15_000, 'Positions to start (B)');
+  const ceoB = esOf(ceoId), pesB = esOf(posId);
+  const from = ceoB.items.length;
+  const cont = await engine.methods['sessions.continueAfterRestart']({ id: ceoId }).catch((e) => ({ action: 'error', message: e.message }));
+  check('c', !!ceoB && !!pesB && cont.action === 'continued', 'engine B: Positions running; the CEO continued after the restart', `continue: ${cont.action} (${oneLine(cont.message, 80)})`);
+  const ceoText = () => replyOf(mainItems(ceoB, from));
+  await until(async () => {
+    await refuseCards(ceoId, ceoB); await refuseCards(posId, pesB);
+    return ceoText().includes(LEDGER) && !ceoB.turnActive && !pesB.turnActive && !ceoB.starting && !pesB.starting;
+  }, STEP_MS * 2, 'the CEO to relay the token after the restart').catch((e) => info(e.message));
+  await sleep(3000); // a late answer or a stray turn would show by now
+
+  // ---- d: one ticket, one copy of the question in the position's chat, the CEO has the token
+  const xt = path.join(W.teamRoot, 'northwind');
+  const lines = [];
+  for (const f of (fs.existsSync(xt) ? fs.readdirSync(xt) : []).filter((n) => /crosstalk/.test(n))) {
+    for (const l of fs.readFileSync(path.join(xt, f), 'utf8').split('\n')) { try { if (l.trim()) lines.push(JSON.parse(l)); } catch {} }
+  }
+  const tickets = [...new Set(lines.map((l) => l.ticket).filter(Boolean))];
+  const firstDeliveries = lines.filter((l) => l.state === 'delivered' && !l.resumed).length;
+  const resumed = lines.filter((l) => l.state === 'delivered' && l.resumed).length;
+  const head = q.slice(0, 40);
+  const userItems = pesB.items.filter((it) => it.type === 'user' && !it.parentToolUseId);
+  const copies = userItems.filter((it) => str(it.text).includes(head)).length;
+  const resumes = userItems.filter((it) => it.ask && it.ask.resume).length;
+  check('d1', tickets.length === 1 && copies === 1 && firstDeliveries === 1, 'one ticket; the question reached the position once',
+    `tickets ${tickets.join(', ') || 'none'} (states ${lines.map((l) => l.state + (l.resumed ? '(resumed)' : '')).join(' > ')}); copies of the question in the position chat ${copies}; first deliveries ${firstDeliveries}, resumes ${resumed} (resume notes in the chat ${resumes})`);
+  const asksB = mainItems(ceoB, from).filter((it) => it.type === 'tool' && it.name === 'mcp__team__team_ask');
+  const lateTurns = mainItems(ceoB, from).filter((it) => it.type === 'user' && it.origin === 'answer');
+  const rejoined = logLines.filter((l) => /\[B\].*re-joining it/.test(l)).length;
+  check('d2', ceoText().includes(LEDGER), 'the CEO\'s reply after the restart has the token',
+    `${asksB.length} new team_ask call(s) (${asksB.map((a) => `${a.status}: ${oneLine(str(a.result), 80)}`).join(' | ') || 'none'}); re-joined ${rejoined}; late-answer turns ${lateTurns.length}; reply: ${oneLine(ceoText(), 160)}`);
+  const posReads = pesB.items.filter((it) => it.type === 'tool' && it.name === 'Read' && /ledger-\d/.test(str(it.input)));
+  info(`the position's ledger Reads (both engines): ${posReads.map((t) => `${(str(t.input).match(/ledger-\d/) || [''])[0]}:${t.status}`).join(', ')}`);
 }
 
 const hardStop = setTimeout(async () => {
