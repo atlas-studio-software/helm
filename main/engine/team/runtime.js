@@ -191,6 +191,7 @@ function createRuntime(opts = {}) {
   let tickTimer = null;
   let started = false;
   let stopped = false;
+  let loaded = false; // prime(): the persisted tickets are in memory
   let kicking = false;
   let again = false;
 
@@ -653,10 +654,13 @@ function createRuntime(opts = {}) {
 
   // team_ask / colleague_ask. -> answered | pending | refused | cancelled | expired (the tool result object)
   async function ask(p = {}) {
+    const again = sameCall(p);
+    if (again) return resumeAsk(again, p);
     const made = createTicket(p);
     if (made.refused) return made.refused;
     const t = made.ticket;
     const budget = budgetMs(p, made.parent);
+    if (!budget.short) t.waitUntil = now() + budget.ms; // where a resumed call's wait ends (resumeAsk)
     persist();
     emitTicket(t);
     if (budget.short) {
@@ -668,6 +672,36 @@ function createRuntime(opts = {}) {
     kick();
     const why = await wait;
     if (why === 'settled') { if (t.asker !== 'none') t.asker = 'received'; persist(); }
+    return resultOf(t);
+  }
+
+  // Keep-through-restart: a CEO or position chat's CLI kept running while Helm restarted is still inside the
+  // team_ask / colleague_ask it was waiting on, and the broker re-delivers that unanswered call to this Helm
+  // (broker.js). The same tool call (same tool_use id, same asker) is not a new question: it takes up its own ticket.
+  function sameCall(p) {
+    if (!p || !p.toolUseId) return null;
+    const from = p.from || {};
+    for (const t of tickets.values()) {
+      if (t.toolUseId !== p.toolUseId || t.company !== p.company || t.kind === 'duty' || !t.from || t.from.kind !== from.kind) continue;
+      if (from.kind === 'position' ? t.from.id === from.id : t.from.sessionId === from.sessionId) return t;
+    }
+    return null;
+  }
+
+  // Waits again until the original call's deadline. Already settled (answered while Helm was away): the answer goes
+  // back in this call and the late-answer turn it would have started is dropped. The deadline passed: pending, as at
+  // the end of any wait (the answer then arrives as a late answer).
+  async function resumeAsk(t, p) {
+    log('info', `team runtime: ${t.id} was asked again by the same tool call after a restart (${t.asker}, ${t.state}): taking it up again`);
+    if (!isOpen(t)) {
+      if (t.asker !== 'none' && t.asker !== 'stopped') { t.asker = 'received'; dropOutbox(t.id, 'answer'); persist(); emitTicket(t); }
+      return resultOf(t);
+    }
+    if (t.asker !== 'lost' && t.asker !== 'waiting') return resultOf(t); // that call already returned (pending / stopped)
+    const left = (Number(t.waitUntil) || 0) - now();
+    if (!(left > 0)) { afterWait(t, 'timeout'); return resultOf(t); }
+    const why = await waitOn(t, left, p.signal);
+    if (why === 'settled') { if (t.asker !== 'none') t.asker = 'received'; dropOutbox(t.id, 'answer'); persist(); }
     return resultOf(t);
   }
 
@@ -1445,13 +1479,23 @@ function createRuntime(opts = {}) {
     return kicking;
   }
 
+  // The persisted tickets, loaded without running anything (no delivery, recovery or timer): wire.js prepare(), for
+  // the engine's re-attach pass, so a team_ask the broker re-delivers to a kept CEO chat finds its ticket (resumeAsk)
+  // before start(). start() primes too when nothing did.
+  function prime() {
+    if (loaded) return;
+    loaded = true;
+    load();
+    // a live call can't survive a restart: their answers come as late answers (5.5), unless the same tool call comes
+    // back (a CLI kept through the restart, resumeAsk)
+    persist();
+  }
+
   function start() {
     if (started) return;
     started = true;
     stopped = false;
-    load();
-    // a live call can't survive a restart: their answers come as late answers (5.5)
-    persist();
+    prime();
     tickTimer = clock.setInterval(() => { pruneSettled(); kick(); }, tickMs);
     kick();
   }
@@ -1582,7 +1626,7 @@ function createRuntime(opts = {}) {
 
   return {
     LIMITS,
-    start, stop, kick,
+    prime, start, stop, kick,
     crosstalk, noteOwnWrite, isOwnEdit,
     ask, ticket, cancel, release, followup, forward,
     runDuty, resumeRun, noteDutyReport,

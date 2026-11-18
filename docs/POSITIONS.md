@@ -350,7 +350,7 @@ Both were probed on claude.exe 2.1.319 (about $0.34; the probe output is kept ou
 | Logging / limits / cycles | every call passes through Helm | outgoing calls can be gated as tool calls; inbound can't be shaped |
 | Long answers | measured: a 75 s and a 150 s handler both returned cleanly; `tool_progress` heartbeats every ~30 s while waiting | n/a (fire and forget) |
 | Stop | `interrupt()` aborts the handler's `extra.signal` at once; the model gets an error result | n/a |
-| Helm restart (broker) | the server is re-registered by name on re-attach; a call in flight at the crash has no responder until the server timeout | messages queue in the target's inbox |
+| Helm restart (broker) | the new Helm rebuilds the server; the CLI keeps its MCP client and the repeated initialize names it again; the broker re-delivers a call the old Helm never answered. After a crash the CLI ends too | messages queue in the target's inbox |
 | Trust on Windows | Helm knows exactly which session called | sender pid unverifiable on Windows; default auto-delivers within the same permission class |
 | Phone / Team view | Helm emits events for every state | invisible to Helm |
 
@@ -367,9 +367,11 @@ back through", and seeing what the CEO asked and what was answered is part of th
 the position's own history with you. Asks are clearly labelled bubbles (10.4), and the queue never cuts into
 your own conversation (5.3).
 
-**Restart gap, and why the sync wait is bounded.** A tool call in flight when Helm dies (a crash, or a forced quit;
-update restarts already wait for running turns) has no responder after re-attach. It ends only at the server
-`timeout`. So the server timeout is `max wait + 60 s` = **660 s**, not unbounded. The CEO's default sync wait is
+**Restart gap, and why the sync wait is bounded.** With Keep sessions running on, a restart Helm performs keeps a
+CEO or position chat that is inside a `team` call: the broker re-delivers the unanswered call to the new Helm, which
+takes up its ticket by the tool call's id and waits out the rest of the original wait (5.5). Without keep, or after a
+crash or quit, the CLI ends with Helm. A call left with no responder ends only at the server `timeout`. So the server
+timeout is `max wait + 60 s` = **660 s**, not unbounded. The CEO's default sync wait is
 **300 s**: most answers come back in-call, and a slow chain returns pending and arrives as a late answer (5.5). The
 ticket itself survives a restart (persisted), so the work is never lost.
 
@@ -488,7 +490,8 @@ else of this chat or your notebook. If you need a report's input, use team_ask. 
 - The CEO's turn is `working` with activity "Waiting for Legal".
   - No stall false alarm. The CLI sends a `tool_progress` heartbeat about every 30 s while an SDK MCP call waits
     (measured), and any SDK message clears Helm's stall timer (stall.js). So stall.js needs no change.
-  - The restart gate sees the turn as busy, as for any long tool, so an update restart waits for it.
+  - The restart gate sees the turn as busy, as for any long tool, so an update restart waits for it. With Keep
+    sessions running on, the chat is kept instead and the restart does not wait (5.5).
 
 ### 5.5 Late answers, Stop, restarts
 
@@ -500,10 +503,21 @@ else of this chat or your notebook. If you need a report's input, use team_ask. 
   NOT cancelled. When it is answered, Helm adds an **answer card** to the chat (a Helm item, no turn): "Legal
   answered after you stopped: [Show] [Send to CEO]". Stop means "don't spend more turns on my behalf", but the
   work already paid for is kept.
-- **Helm restarts mid-ask.** Tickets are persisted in `team-state.json`. If the answerer's turn survived in the
-  broker (Keep sessions running), its end is seen on re-attach and the answer is recorded. The asker's pending MCP
-  call is lost with the old process: the CLI gets a tool error, and the restart note already tells the model that
-  Helm restarted. The answer is then delivered as a late answer. Queued tickets are re-queued on start.
+- **Helm restarts mid-ask.** Tickets are persisted in `team-state.json`. With Keep sessions running on, a restart
+  Helm performs keeps CEO and position chats like any chat (the broker meta records `team` and, for a position,
+  `guarded`; the new Helm rebuilds the same server, guard and hooks, and a mismatch ends the CLI with the restart
+  note). The answerer's turn goes on; its end is the answer. The asker's call is re-delivered by the broker with the
+  same tool-use id, so `ask` takes up the same ticket instead of asking again: it waits until the original deadline
+  (`waitUntil`); an answer that came while Helm was away is returned in that call and its late-answer turn dropped;
+  a passed deadline returns `pending`. Without keep (or after a crash) the asker's call is lost with the old process,
+  the restart note tells the model, and the answer comes as a late answer. Queued tickets are re-queued on start.
+  The layer is prepared before the engine's re-attach pass (tickets loaded, nothing running) and started after it,
+  so recovery sees which answer turns survived and no question is delivered beside a re-attaching CLI.
+- **Other calls in flight at a kept restart.** A duty run is kept; its result is recorded when the turn ends. An
+  open access card (`request_access`, an MCP call) is re-delivered and opens again. An outward card waits inside the
+  guard's PreToolUse hook: the CLI denies that pending hook call with a retry notice and retries, and the new guard
+  opens the card again. A pending own-file observer call (PostToolUse) is settled by the CLI and never seen, so one
+  notebook or brief write may go unnoticed.
 - **Hard expiry.** A ticket not answered 2 h after it was asked becomes `expired` and is withdrawn if still queued.
   If it is still being worked on, it stays `late` and its answer is still logged and delivered. The asker gets
   `<helm-answer state="expired">`.
@@ -1108,7 +1122,7 @@ no login, and costs are cents.
 
 | risk | handling |
 | --- | --- |
-| SDK MCP across the broker re-attach (Keep sessions running) | read from the SDK, not yet probed live: the server is re-registered by name on re-attach, but a call in flight at a crash has no responder. Mitigation: server timeout 660 s, so the orphaned call ends; tickets are persisted, so the answer still arrives as a late answer. T9 adds a forced-restart check to `team-live.js` |
+| SDK MCP across the broker re-attach (Keep sessions running) | handled in code, not yet probed live: the new Helm rebuilds the server from broker `meta.team`, the CLI keeps its MCP client, and the broker re-delivers a call the old Helm never answered (5.5). A setup that does not match ends the CLI with the restart note; a position is never re-attached without its guard. The 660 s server timeout still ends a call with no responder; tickets are persisted, so the answer still arrives. T9 adds a forced-restart check to `team-live.js` |
 | Parallel tool calls while a team call waits | not probed; nothing depends on it (a waiting CEO turn simply waits) |
 | How the CLI frames host-injected `channel` / `task-notification` messages | not probed; the design uses the proven `es.send({ origin: 'helm' })` path for late answers instead |
 | Recorded system prompt can't change mid-chat | roster/brief/powers changes ride `<helm-note>`s; the hook reads live powers, so enforcement is never stale |

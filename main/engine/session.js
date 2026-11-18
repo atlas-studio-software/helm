@@ -109,6 +109,33 @@ const STEER_START_MS = 30_000; // lane steer: a mid-turn message left for the ne
 const REINIT_TIMEOUT_MS = Number(process.env.HELM_REINIT_TIMEOUT_MS) > 0 ? Number(process.env.HELM_REINIT_TIMEOUT_MS) : 15_000;
 const CLOSE_KILL_GRACE_MS = 1500; // close() with a tool running: claude.exe gets this long to exit on its own
 
+// Positions + lane detach: what a CLI handed to the broker was started with (broker meta.team), so a re-attach can
+// rebuild exactly that. null for a chat without the team server.
+function teamMetaOf(es) {
+  if (es.teamAttached === 'position' && es.s.position) return { kind: 'position', company: es.s.position.company, position: es.s.position.id };
+  if (es.teamAttached === 'ceo') return { kind: 'ceo', company: (es.s.team && es.s.team.company) || null };
+  if (es.teamAttached) return { kind: String(es.teamAttached) };
+  return null;
+}
+// The rebuilt options must give the kept CLI what it was started with -> null, or why not (the re-attach stops it).
+// A position additionally needs its guard: options.js refuses to build without a PreToolUse guard, and wire.js marks
+// the options it built with the team guard in them (_teamGuarded), which is checked here as well.
+function teamReattachProblem(kept, es, opts, entry) {
+  const now = teamMetaOf(es);
+  const server = opts && opts.mcpServers && opts.mcpServers.team;
+  if (!now || now.kind !== kept.kind) return `it was started as ${kept.kind === 'ceo' ? 'a CEO chat' : kept.kind === 'position' ? 'a position chat' : `a chat with the team server (${kept.kind})`}, but this Helm would now start it ${now ? `as a ${now.kind} chat` : 'without the team server'}`;
+  if ((kept.company || null) !== (now.company || null)) return `it was started for company ${kept.company}, but this chat is now in ${now.company || 'no company'}`;
+  if (kept.kind === 'position' && kept.position !== now.position) return `it was started for position ${kept.position}, not ${now.position}`;
+  if (!server) return 'the team server could not be rebuilt';
+  if (kept.kind === 'position') {
+    const pre = (opts.hooks && opts.hooks.PreToolUse) || [];
+    if (!opts._teamGuarded || !pre.length) return 'the position\'s guard could not be rebuilt';
+    const norm = (p) => (p ? path.resolve(String(p)).replace(/[\\/]+$/, '').toLowerCase() : '');
+    if (entry && entry.cwd && norm(entry.cwd) !== norm(opts.cwd)) return `it runs in ${entry.cwd}, but the position now runs in ${opts.cwd}`;
+  }
+  return null;
+}
+
 // claude.exe's PID comes from the SDK's onProcessSpawned option (set in _start); its process
 // wrapper (private, guarded) says whether it has exited. Neither present means nothing to do.
 function cliPid(q) { return (q && q._helmCli && q._helmCli.pid) || null; }
@@ -1043,13 +1070,22 @@ class EngineSession {
     // Positions (team/wire.js): a position chat runs with team/options.js instead (isolated; base supplies canUseTool,
     // stderr and env); a CEO chat keeps everything and gains the `team` MCP server. Recomputed at every CLI start.
     // `keep` tells it this CLI goes to the broker: a chat in no company then runs without the team server (wire.js).
-    // A re-attach never asks: the kept CLI was started without any team server (only such CLIs reach the broker), and
-    // an in-process server injected now would not be the one the CLI registered (nothing re-registers it).
+    // A re-attach rebuilds the same setup in THIS Helm when the kept CLI was started with one (broker meta.team): the
+    // repeated initialize names the `team` server again (the CLI keeps its MCP client; only the host end is new) and
+    // carries the position's guard hooks, which replace the dead Helm's. Anything that does not match what the CLI
+    // was started with throws, and reattach() stops that CLI with the restart note (_keepFailed): never a position
+    // without its guard, never a CEO whose team tools have nothing behind them.
     let opts = base;
     this.teamAttached = null;
     const team = this.engine.team;
-    if (reattach && this.s.position) throw new Error('a position chat is never kept through a restart (it runs with the team guard and server)');
-    if (!reattach && team && typeof team.sessionOptions === 'function') opts = (await team.sessionOptions(this, base, sdk, { keep: keepWanted })) || base;
+    const keptTeam = reattach ? (reattach.meta && reattach.meta.team) || null : null;
+    if (reattach && (keptTeam || this.s.position)) {
+      if (!keptTeam) throw new Error('this position chat\'s CLI was started without its team server and guard');
+      if (!team || typeof team.sessionOptions !== 'function') throw new Error('Positions is not available to re-attach its team server and guard');
+      opts = (await team.sessionOptions(this, base, sdk, { keep: true, reattach: true })) || base;
+      const why = teamReattachProblem(keptTeam, this, opts, reattach);
+      if (why) throw new Error(why);
+    } else if (!reattach && team && typeof team.sessionOptions === 'function') opts = (await team.sessionOptions(this, base, sdk, { keep: keepWanted })) || base;
     const own = this.s.claudeSessionId && findTranscript(this.s.claudeSessionId, this.s.cwd, this.engine.projectsDir);
     if (reattach) {
       // the CLI already runs in the broker: no resume / session id flags matter (nothing is spawned)
@@ -1088,13 +1124,12 @@ class EngineSession {
     // (broker.js), so a Helm restart detaches from it instead of killing it. A re-attach always goes through it.
     this.brokerProc = null;
     this.replaySkip = null;
-    // Positions: a CLI with the in-process team server is never handed to the broker. The server lives in THIS Helm
-    // process: after a restart the kept CLI would still list mcp__team__* with nothing behind them, and a CEO's
-    // team_ask waits up to 600 s inside its tool call, which no re-attach can answer (the runtime treats a restart
-    // mid-ask as 'lost' and answers late instead). So a CEO chat (cwd in a company) and a position chat end
-    // resumable at a restart, as before keep existed; every other chat (teamAttached null: wire.js leaves the team
-    // server off when `keep`) is kept as usual.
-    if (broker && (reattach || (keepWanted && !this.teamAttached))) {
+    // Positions: CEO and position chats are kept like any chat. The broker meta records what the CLI was started
+    // with (meta.team: which server, for which company / position), so the next Helm rebuilds exactly that setup on
+    // re-attach (above), and meta.guarded makes the broker itself kill a position whose re-attach does not confirm
+    // its hooks (broker.js). A team_ask waiting at the restart is re-delivered to the new Helm by the broker and
+    // picked up again by its tool call id (team/runtime.js), so it still answers in the same call.
+    if (broker && (reattach || keepWanted)) {
       const hooks = { onPid: (pid) => { spawned.pid = pid; }, onStderr: (d) => opts.stderr(d) };
       if (reattach) {
         this.replaySkip = known;
@@ -1111,6 +1146,8 @@ class EngineSession {
       } else {
         const key = `${this.s.id}~${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
         const meta = { sdk: this.engine.sdkVersion ? this.engine.sdkVersion() : null, claudePath: this.engine.claudePath || null };
+        const teamMeta = teamMetaOf(this);
+        if (teamMeta) { meta.team = teamMeta; if (teamMeta.kind === 'position') meta.guarded = true; }
         opts.spawnClaudeCodeProcess = (o) => (this.brokerProc = broker.spawnProcess({ key, sid: this.s.id, meta }, o, hooks));
       }
     }
@@ -1144,14 +1181,16 @@ class EngineSession {
   // not leave) and the pipe is up: a restart can detach from it.
   canKeep() {
     const p = this.brokerProc;
-    return !!(this.q && !this.teamAttached && p && !p.detached && !p.exited && p.pid && this.q._helmCli && this.engine.keepSafe && this.engine.keepSafe());
+    return !!(this.q && p && !p.detached && !p.exited && p.pid && this.q._helmCli && this.engine.keepSafe && this.engine.keepSafe());
   }
 
   // After a restart: take over the CLI the broker kept running for this session, if it still fits (keep-compat.js).
   // Otherwise today's path: that CLI is ended and the session shows the restart note with the reason and Continue.
+  // A position's CLI runs in the folder team/options.js picks (its workspace or worktree), not always s.cwd: that one
+  // is checked against the rebuilt options instead (teamReattachProblem).
   async reattach(entry, here = {}) {
     if (this.q || this.starting) return false;
-    const why = keepCompat(entry, { id: this.s.id, claudeSessionId: this.s.claudeSessionId, cwd: this.s.cwd }, here);
+    const why = keepCompat(entry, { id: this.s.id, claudeSessionId: this.s.claudeSessionId, cwd: this.s.position ? null : this.s.cwd }, here);
     if (why) { await this._keepFailed(entry, why, { live: false }); return false; }
     this.starting = this._start(entry);
     try { await this.starting; } catch (e) {
@@ -2334,4 +2373,4 @@ class EngineSession {
   }
 }
 
-module.exports = { EngineSession, describeTool, PUBLIC_FIELDS, VALID_MODES, CLAUDE_ID_RE };
+module.exports = { EngineSession, describeTool, PUBLIC_FIELDS, VALID_MODES, CLAUDE_ID_RE, teamMetaOf, teamReattachProblem };

@@ -292,8 +292,11 @@ an org tree under the CEO. It is off until you turn it on.
   chat as a Helm message, and the CEO passes it on to you.
 - If you press **Stop** while the CEO waits, the question stays open. When the answer comes, an answer card says
   "Legal answered after you stopped", with **Show** and **Send to CEO**.
-- A question still open 2 hours after it was asked expires. Questions survive a Helm restart; the answer then
-  arrives as a late answer.
+- A question still open 2 hours after it was asked expires. Questions survive a Helm restart. With **Keep sessions
+  running through a restart** on (Settings > Helm), a restart Helm does itself keeps CEO and position chats running
+  like any chat: a CEO still waiting keeps waiting for the answer in the same reply, a position mid-answer finishes,
+  and an open approval card comes back. Without it, or if Helm closed another way, the answer arrives as a late
+  answer.
 - Limits stop runaway loops: 20 questions an hour from one position, 200 a day per company, at most 8 questions in
   one chain. A loop (A waits on B, B asks A) is refused at once.
 

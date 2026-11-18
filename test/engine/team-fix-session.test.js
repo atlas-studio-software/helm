@@ -1,7 +1,8 @@
 'use strict';
 // Positions review fixes, the session / wiring side (main/engine/session.js + main/engine/team/wire.js), over the
 // fake SDK: the team-items sidecar fence, the chat entry undone when a position session cannot be made, async git
-// worktrees, team.get lastActivity, a position's own brief.md writes, keep-through-restart with Positions on, and a
+// worktrees, team.get lastActivity, a position's own brief.md writes, keep-through-restart with Positions on (CEO and
+// position chats kept, their setup rebuilt on re-attach or refused), and a
 // failed CLI start keeping the seed and the Helm notes.
 
 const test = require('node:test');
@@ -240,73 +241,267 @@ test('own writes: a shell command naming brief.md, or a file tool writing notebo
 });
 
 // ---------------------------------------------------------------- 3: keep sessions running through a restart, Positions on
-test('keep on + Positions on: a chat in no company runs in the broker without the team server; a CEO chat keeps its server and is not kept; a re-attach never gets a team server', async () => {
+test('keep on + Positions on: CEO and position chats run in the broker with their team setup recorded; a re-attach rebuilds exactly that setup or refuses', async () => {
   const w = await teamOn(async function* () { yield* F.textTurn('m1', 'ok'); yield F.result(0.01); }, { extra: { detach: true } });
   const ctx = w.engine._internal.ctx;
-  const spawned = [], attached = [];
+  const spawned = [], attached = [], ended = [];
   ctx.broker = {
     job: () => null, shutdownAll: async () => {}, keepForRestart: async () => false,
     spawnProcess: (meta, o, hooks) => { const p = { pid: 4242 + spawned.length, key: meta.key, detached: false, exited: false, detach() { this.detached = true; return true; } }; spawned.push({ meta, o, hooks, p }); return p; },
     attachProcess: (entry, hooks, o) => { const p = { pid: entry.pid, key: entry.key, detached: false, exited: false }; attached.push({ entry, hooks, o, p }); return p; },
+    end: async (entry, why) => { ended.push({ key: entry.key, why }); return { t: 'ok' }; },
   };
+  ctx.keepSafe = () => true;
   const wiring = ctx.team;
   const realOpts = wiring.sessionOptions;
   const hints = [];
   wiring.sessionOptions = (es, base, sdk, hint) => { hints.push({ id: es.s.id, hint }); return realOpts(es, base, sdk, hint); };
   const optsOf = (n) => w.sdk.calls[n].options;
+  const lastOpts = () => w.sdk.calls[w.sdk.calls.length - 1].options;
+  const turn = async (id, text, n) => { await w.engine.methods['sessions.send']({ id, text }); await until(() => w.sdk.calls.length === n && !w.es(id).turnActive, 5000, `turn ${n}`); };
+  const here = { v: 2, sdkVersion: null, claudePath: null };
+  const entryFor = (es, extra) => ({ key: `${es.s.id}~k${Math.random().toString(36).slice(2, 6)}`, sid: es.s.id, pid: 6000 + attached.length, busy: false, cliVersion: '2.1.300', claudeSessionId: es.s.claudeSessionId, broker: { v: 2, compatible: true }, ...extra });
   try {
-    // an ordinary chat (folder in no company): broker-run, no team server, keepable
+    // an ordinary chat (folder in no company): broker-run, no team server, no team meta, keepable as before
     const plain = await w.engine.methods['sessions.create']({ cwd: mk('plain-') });
-    await w.engine.methods['sessions.send']({ id: plain.id, text: 'hi' });
-    await until(() => w.sdk.calls.length === 1 && !w.es(plain.id).turnActive, 5000, 'plain turn');
+    await turn(plain.id, 'hi', 1);
     const po = optsOf(0);
     assert.strictEqual(typeof po.spawnClaudeCodeProcess, 'function', 'goes to the broker');
-    assert.ok(!po.mcpServers || !po.mcpServers.team, 'no team server on a kept chat');
+    assert.ok(!po.mcpServers || !po.mcpServers.team, 'no team server on a kept chat in no company');
     assert.deepStrictEqual(hints[0], { id: plain.id, hint: { keep: true } });
-    const pes = w.es(plain.id);
-    assert.strictEqual(pes.teamAttached, null);
     po.spawnClaudeCodeProcess({});
+    assert.strictEqual(spawned[0].meta.meta.team, undefined, 'no team meta');
+    assert.strictEqual(spawned[0].meta.meta.guarded, undefined);
+    const pes = w.es(plain.id);
     pes.q._helmCli.pid = pes.brokerProc.pid;
-    ctx.keepSafe = () => true;
     assert.strictEqual(pes.canKeep(), true, 'kept through a restart as before Positions');
 
-    // a CEO chat (folder in the company): the team server, never in the broker, not kept
+    // a CEO chat (folder in the company): its team server AND the broker; the meta says what it was started with
     const ceo = await w.engine.methods['sessions.create']({ cwd: w.company });
-    await w.engine.methods['sessions.send']({ id: ceo.id, text: 'hi' });
-    await until(() => w.sdk.calls.length === 2 && !w.es(ceo.id).turnActive, 5000, 'ceo turn');
+    await turn(ceo.id, 'hi', 2);
     const co = optsOf(1);
     assert.ok(co.mcpServers && co.mcpServers.team, 'the CEO keeps its team server');
-    assert.strictEqual(co.spawnClaudeCodeProcess, undefined, 'a CLI with the in-process server never goes to the broker');
-    assert.strictEqual(w.es(ceo.id).teamAttached, 'ceo');
-    assert.strictEqual(w.es(ceo.id).canKeep(), false);
-    assert.strictEqual(spawned.length, 1);
+    assert.strictEqual(typeof co.spawnClaudeCodeProcess, 'function', 'and goes to the broker');
+    co.spawnClaudeCodeProcess({});
+    assert.deepStrictEqual(spawned[1].meta.meta.team, { kind: 'ceo', company: 'northwind' });
+    assert.strictEqual(spawned[1].meta.meta.guarded, undefined, 'a CEO is not guarded (its prod-guard is an ordinary hook)');
+    const ces = w.es(ceo.id);
+    ces.q._helmCli.pid = ces.brokerProc.pid;
+    assert.strictEqual(ces.teamAttached, 'ceo');
+    assert.strictEqual(ces.canKeep(), true, 'a CEO chat is kept');
 
-    // a re-attach: sessionOptions is not asked, so no team server is injected into the kept CLI
+    // a position chat: isolated options, its guard, the broker; meta.guarded makes the broker kill it on an unconfirmed re-attach
+    const { sessionId } = await w.engine.methods['team.open']({ company: 'northwind', id: 'ops' });
+    await turn(sessionId, 'hi', 3);
+    const pso = optsOf(2);
+    assert.ok(isPosition(pso), 'position options');
+    assert.strictEqual(pso.permissionMode, 'bypassPermissions', 'isolation unchanged: the guard is the gate');
+    assert.strictEqual(pso._teamGuarded, true, 'built with the team guard');
+    assert.strictEqual(typeof pso.spawnClaudeCodeProcess, 'function', 'a position goes to the broker');
+    pso.spawnClaudeCodeProcess({});
+    assert.deepStrictEqual(spawned[2].meta.meta.team, { kind: 'position', company: 'northwind', position: 'ops' });
+    assert.strictEqual(spawned[2].meta.meta.guarded, true);
+    const xes = w.es(sessionId);
+    xes.q._helmCli.pid = xes.brokerProc.pid;
+    assert.strictEqual(xes.canKeep(), true, 'a position chat is kept');
+
+    // re-attach of an ordinary kept CLI: sessionOptions is not asked, no team server appears in it
     const back = await w.engine.methods['sessions.create']({ cwd: mk('back-') });
     const bes = w.es(back.id);
-    const n = hints.length;
-    await bes._start({ key: `${back.id}~k`, sid: back.id, pid: 5151, busy: false });
-    const ro = optsOf(2);
-    assert.strictEqual(hints.length, n, 'no sessionOptions on a re-attach');
-    assert.ok(!ro.mcpServers || !ro.mcpServers.team, 'no team server on a re-attached CLI');
+    let n = hints.length;
+    await bes._start(entryFor(bes, {}));
+    assert.strictEqual(hints.length, n, 'no sessionOptions on a re-attach without team meta');
+    const ro = lastOpts();
+    assert.ok(!ro.mcpServers || !ro.mcpServers.team, 'no team server on a re-attached ordinary CLI');
     ro.spawnClaudeCodeProcess({});
     assert.strictEqual(attached.length, 1, 'through the broker\'s attach');
     assert.strictEqual(bes.teamAttached, null);
     await bes.close({ final: false });
 
-    // a position chat is never re-attached (it would run without its guard)
-    const { sessionId } = await w.engine.methods['team.open']({ company: 'northwind', id: 'ops' });
-    await assert.rejects(w.es(sessionId)._start({ key: `${sessionId}~k`, sid: sessionId, pid: 6161, busy: false }), /never kept through a restart/);
+    // re-attach of a kept CEO CLI: the same server is rebuilt in this Helm and named in the repeated initialize
+    await ces.close({ final: false });
+    n = hints.length;
+    await ces._start(entryFor(ces, { meta: { team: { kind: 'ceo', company: 'northwind' } }, cwd: w.company }));
+    assert.deepStrictEqual(hints[n], { id: ceo.id, hint: { keep: true, reattach: true } });
+    const rco = lastOpts();
+    assert.ok(rco.mcpServers && rco.mcpServers.team, 'the CEO\'s team server is back');
+    assert.notStrictEqual(rco.mcpServers.team, co.mcpServers.team, 'a server of THIS Helm');
+    assert.ok(rco.mcpServers.team.instance.tools.some((t) => t.name === 'team_ask'), 'with the CEO tools');
+    rco.spawnClaudeCodeProcess({});
+    assert.strictEqual(attached.length, 2);
+    assert.strictEqual(ces.teamAttached, 'ceo');
+    await ces.close({ final: false });
+
+    // re-attach of a kept position CLI: its isolated options and the full hook set (prod-guard, team guard, own-file)
+    await xes.close({ final: false });
+    await xes._start(entryFor(xes, { meta: { team: { kind: 'position', company: 'northwind', position: 'ops' }, guarded: true }, cwd: pso.cwd }));
+    const rpo = lastOpts();
+    assert.ok(isPosition(rpo), 'the isolated options again');
+    assert.strictEqual(rpo._teamGuarded, true);
+    assert.strictEqual(rpo.hooks.PreToolUse.length, pso.hooks.PreToolUse.length, 'every PreToolUse hook');
+    assert.strictEqual(rpo.hooks.PostToolUse.length, pso.hooks.PostToolUse.length, 'the own-file observer');
+    assert.ok(rpo.mcpServers && rpo.mcpServers.team, 'its team server');
+    // the rebuilt team guard enforces: a read outside the position's area is denied
+    const outside = path.join(mk('outside-'), 'plan.md');
+    fs.writeFileSync(outside, 'plan');
+    const guard = rpo.hooks.PreToolUse[1].hooks[0];
+    const verdict = await guard({ tool_name: 'Read', tool_input: { file_path: outside }, cwd: rpo.cwd }, 'tu-r', { signal: new AbortController().signal });
+    assert.strictEqual(verdict.hookSpecificOutput && verdict.hookSpecificOutput.permissionDecision, 'deny', `guarded after a re-attach: ${JSON.stringify(verdict)}`);
+    rpo.spawnClaudeCodeProcess({});
+    assert.strictEqual(attached.length, 3);
+    await xes.close({ final: false });
+
+    // refusals: never a position without its guard, never a setup other than the one the CLI was started with
+    await assert.rejects(xes._start(entryFor(xes, {})), /started without its team server and guard/);
+    await assert.rejects(xes._start(entryFor(xes, { meta: { team: { kind: 'position', company: 'northwind', position: 'ops' }, guarded: true }, cwd: mk('elsewhere-') })), /runs in .* but the position now runs in/);
+    await assert.rejects(xes._start(entryFor(xes, { meta: { team: { kind: 'position', company: 'northwind', position: 'qa' }, guarded: true }, cwd: pso.cwd })), /started for position qa/);
+    await assert.rejects(ces._start(entryFor(ces, { meta: { team: { kind: 'ceo', company: 'other' } }, cwd: w.company })), /started for company other/);
+    const loose = await w.engine.methods['sessions.create']({ cwd: mk('loose-') });
+    await assert.rejects(w.es(loose.id)._start(entryFor(w.es(loose.id), { meta: { team: { kind: 'ceo', company: 'northwind' } } })), /without the team server/);
+    assert.strictEqual(attached.length, 3, 'nothing refused was attached');
+
+    // the engine's path (reattach): a refusal stops that CLI at the broker and shows the restart note with the reason
+    const e1 = entryFor(xes, {});
+    assert.strictEqual(await xes.reattach(e1, here), false);
+    assert.deepStrictEqual(ended.map((x) => x.key), [e1.key], 'the broker ends the CLI');
+    assert.match(ended[0].why, /started without its team server and guard/);
+
+    // Positions off now: neither a CEO nor a position CLI can get its setup back, so neither is re-attached
+    w.st.enabled = false; w.engine.team.refresh();
+    await assert.rejects(ces._start(entryFor(ces, { meta: { team: { kind: 'ceo', company: 'northwind' } }, cwd: w.company })), /without the team server/);
+    await assert.rejects(xes._start(entryFor(xes, { meta: { team: { kind: 'position', company: 'northwind', position: 'ops' }, guarded: true }, cwd: pso.cwd })), /Positions is off/);
+    assert.strictEqual(attached.length, 3);
+    w.st.enabled = true; w.engine.team.refresh();
 
     // without a broker (keep not possible) a chat in no company still gets the deferred team_propose
     ctx.broker = null;
-    const loose = await w.engine.methods['sessions.create']({ cwd: mk('loose-') });
-    await w.engine.methods['sessions.send']({ id: loose.id, text: 'hi' });
-    await until(() => w.sdk.calls.length === 4 && !w.es(loose.id).turnActive, 5000, 'loose turn');
-    const lo = optsOf(3);
+    const nb = await w.engine.methods['sessions.create']({ cwd: mk('nb-') });
+    const before = w.sdk.calls.length;
+    await turn(nb.id, 'hi', before + 1);
+    const lo = lastOpts();
     assert.ok(lo.mcpServers && lo.mcpServers.team, 'team server (team_propose) when the chat is not kept');
-    assert.strictEqual(w.es(loose.id).teamAttached, 'none');
+    assert.strictEqual(w.es(nb.id).teamAttached, 'none');
   } finally { ctx.broker = null; await w.engine.shutdown(); }
+});
+
+// ---------------------------------------------------------------- 3b: a restart with a CEO mid-ask and its position mid-answer
+// The whole engine path minus the real broker (broker.test.js covers that): Helm A detaches both CLIs; Helm B's
+// re-attach pass rebuilds their team setup before Positions runs, recovery attaches to the answer turn that
+// survived, the CEO's re-delivered team_ask takes up its own ticket, and the answer comes back in that same call.
+test('restart with keep on: a CEO mid-team_ask and its position mid-answer are kept; the ask is answered in the same call', async () => {
+  const root = path.join(mk('root-'), 'helm-team');
+  const company = mk('co-');
+  const ud = mk('ud-');
+  const st = { enabled: true };
+  const team = { settings: () => st, root: () => root, rootProblem: () => null };
+  const base = { userDataDir: ud, emit: () => {}, log: () => {}, claudePath: null, projectsDir: mk('proj-'), statuslineDir: mk('sl-'),
+    etaDir: false, external: false, tempDir: path.join(os.tmpdir(), 'not-the-test-dirs'), getIdleCloseMs: () => 0, team, detach: true };
+  const ask = (opts, extra) => {
+    const t = opts.mcpServers.team.instance.tools.find((x) => x.name === 'team_ask');
+    return t.handler({ to: 'ops', question: 'WHAT-SHIPS on Monday?' }, { signal: new AbortController().signal, _meta: { 'claudecode/toolUseId': 'toolu_keep1' }, ...extra }).then((r) => JSON.parse(r.content[0].text));
+  };
+  // Helm A: the CEO asks, the position starts answering; both are still at it when Helm restarts
+  const spawnedA = [];
+  const brokerA = {
+    job: () => null, list: async () => [], takeStops: () => [], drainOld: async () => [], shutdownAll: async () => [], end: async () => null,
+    keepForRestart: async (procs) => new Set(procs),
+    spawnProcess: (m, o, hooks) => { const p = { pid: 7100 + spawnedA.length, key: m.key, detached: false, exited: false, detach() { this.detached = true; return true; } }; spawnedA.push({ m, p }); return p; },
+  };
+  let ceoOptsA = null, posOptsA = null;
+  const sdkA = withMcp(createFakeSdk(async function* (um, api) {
+    if (isPosition(api.options)) { posOptsA = api.options; await new Promise(() => {}); return; } // answering when Helm restarts
+    ceoOptsA = api.options;
+    if (/ASK/.test(textOf(um))) await ask(api.options); // in its team_ask when Helm restarts
+    yield* F.textTurn('c1', 'ceo'); yield F.result(0.01);
+  }));
+  const A = createEngine({ ...base, sdk: sdkA, broker: brokerA });
+  const esA = (id) => A._internal.sessions.get(id);
+  let ceoId, posId;
+  try {
+    await until(() => A.team.status().running, 3000, 'team start');
+    const imp = await A.methods['team.proposals.import']({ json: fixture(company) });
+    const byRef = (r) => imp.imported.find((x) => x.ref === r).id;
+    assert.strictEqual((await A.methods['team.decide']({ proposal: byRef('company'), decision: 'approve' })).ok, true);
+    assert.strictEqual((await A.methods['team.decide']({ proposal: byRef('ops'), decision: 'approve' })).ok, true);
+    A._internal.ctx.keepSafe = () => true;
+    ceoId = (await A.methods['sessions.create']({ cwd: company })).id;
+    await A.methods['sessions.send']({ id: ceoId, text: 'ASK ops' });
+    await until(() => [...A._internal.sessions.values()].some((es) => es.s.position && es.turnActive) && posOptsA, 5000, 'the position answering');
+    posId = [...A._internal.sessions.values()].find((es) => es.s.position).s.id;
+    for (const [id, o] of [[ceoId, ceoOptsA], [posId, posOptsA]]) { o.spawnClaudeCodeProcess({}); esA(id).q._helmCli.pid = esA(id).brokerProc.pid; assert.strictEqual(esA(id).canKeep(), true); }
+    assert.strictEqual(A.busy().filter((b) => b.keep).length, 2, 'both keepable: an update restart does not wait for them');
+  } finally { await A.shutdown({ cause: 'restart' }); }
+  const savedA = JSON.parse(fs.readFileSync(path.join(ud, 'sessions.json'), 'utf8')).sessions;
+  const keptA = (id) => savedA.find((x) => x.id === id).kept;
+  assert.ok(keptA(ceoId) && keptA(posId), 'both detached and kept');
+  const metaA = (id) => spawnedA.find((x) => x.m.sid === id).m.meta;
+  assert.deepStrictEqual(metaA(posId).team, { kind: 'position', company: 'northwind', position: 'ops' });
+
+  // Helm B: the broker lists both CLIs; nothing new is spawned for them
+  const attached = [];
+  const ch = new Map(); // sessionId -> push(message) into its re-attached query
+  const entry = (id, cwd) => ({ key: keptA(id).key, sid: id, pid: keptA(id).pid, cwd, meta: metaA(id), busy: true, attached: false, cliVersion: '2.1.300',
+    claudeSessionId: savedA.find((x) => x.id === id).claudeSessionId, startedAt: 1, broker: { v: 2, compatible: true, current: true } });
+  const listed = [entry(ceoId, company), entry(posId, posOptsA.cwd)];
+  const brokerB = {
+    job: () => null, list: async () => listed, takeStops: () => [], drainOld: async () => [], shutdownAll: async () => [], end: async () => null,
+    keepForRestart: async () => new Set(),
+    attachProcess: (e, hooks) => { const p = { pid: e.pid, key: e.key, detached: false, exited: false }; attached.push(e.sid); setImmediate(() => hooks.onReinit({ ok: true, subtype: 'success', hooksApplied: true, pending: 0, error: null, ms: 3 })); return p; },
+  };
+  const sdkB = withMcp(createFakeSdk(async function* () { yield* F.textTurn('b1', 'ok'); yield F.result(0.01); }));
+  const q0 = sdkB.query;
+  const optsB = new Map();
+  sdkB.query = (a) => {
+    const q = q0(a);
+    if (a.options.spawnClaudeCodeProcess) {
+      a.options.spawnClaudeCodeProcess({});
+      const sid = attached[attached.length - 1];
+      optsB.set(sid, a.options);
+      // the kept CLI's stdout: whatever the test pushes
+      const queue = [], waits = [];
+      ch.set(sid, (m) => { const w = waits.shift(); if (w) w({ value: m, done: false }); else queue.push(m); });
+      q[Symbol.asyncIterator] = () => ({ next: () => (queue.length ? Promise.resolve({ value: queue.shift(), done: false }) : new Promise((r) => waits.push(r))), return: async () => ({ done: true }) });
+    }
+    return q;
+  };
+  const B = createEngine({ ...base, sdk: sdkB, broker: brokerB });
+  const esB = (id) => B._internal.sessions.get(id);
+  try {
+    await until(() => B.team.status().running, 5000, 'team start after the re-attach pass');
+    assert.deepStrictEqual(attached.sort(), [ceoId, posId].sort(), 'both re-attached');
+    await until(() => esB(ceoId).items.some((i) => i.subtype === 'kept') && esB(posId).items.some((i) => i.subtype === 'kept'), 3000, 'kept lines');
+    // the setup each CLI was started with, rebuilt in this Helm
+    assert.ok(optsB.get(ceoId).mcpServers.team, 'the CEO\'s team server');
+    assert.ok(isPosition(optsB.get(posId)) && optsB.get(posId)._teamGuarded, 'the position\'s isolated options with its guard');
+    const qCeo = esB(ceoId).q;
+    await sleep(100);
+    assert.strictEqual(esB(ceoId).q, qCeo, 'Positions starting did not recycle the kept CEO chat');
+    const rt = B._internal.ctx.team._live().runtime;
+    const tickets = rt._internals.tickets;
+    const posSends = () => esB(posId).items.filter((i) => i.type === 'user').length;
+    const sendsBefore = posSends();
+    await until(() => (esB(posId).turnWaiters || []).length === 1, 3000, 'recovery attached to the answer turn that survived');
+    // the broker re-delivers the CEO's unanswered team_ask: the same tool call takes up its ticket
+    const n = tickets.size;
+    const call = ask(optsB.get(ceoId));
+    let done = null;
+    call.then((v) => { done = v; });
+    await sleep(50);
+    assert.strictEqual(done, null, 'waiting in the same call');
+    assert.strictEqual(tickets.size, n, 'no second ticket');
+    // the position's kept CLI finishes its answer
+    const push = ch.get(posId);
+    for (const m of F.textTurn('p9', 'answer-42: Mondays')) push(m);
+    push(F.result(0.02));
+    await until(() => done, 3000, 'the answer in the same call');
+    assert.strictEqual(done.status, 'answered', JSON.stringify(done));
+    assert.match(done.answer, /answer-42: Mondays/);
+    assert.strictEqual(posSends(), sendsBefore, 'the question was never delivered a second time');
+    for (const m of F.textTurn('c9', 'ceo done')) ch.get(ceoId)(m);
+    ch.get(ceoId)(F.result(0.03));
+    await sleep(300);
+    assert.ok(!esB(ceoId).items.some((i) => i.type === 'user' && /helm-answer/.test(i.text || '')), 'no late-answer turn in the CEO chat');
+  } finally { await B.shutdown({ cause: 'quit' }); }
 });
 
 // ---------------------------------------------------------------- 4: a failed CLI start keeps the seed and the Helm notes
