@@ -3,6 +3,9 @@
 // Each user message runs a turn of FAKE_STEPS steps, FAKE_STEP_MS apart; at step FAKE_HOOK_AT it calls the host's
 // first PreToolUse hook (hook_callback) and waits for the answer, like a prod-guard check. Every assistant line
 // names this process's pid and how many initialize requests it has seen (a re-attach must not reach the CLI).
+// FAKE_MCP_AT: at that step it calls tool FAKE_MCP_TOOL (default 'slow') of the in-process MCP server 'team' (an
+// mcp_message tools/call carrying the tool_use id in _meta, like Claude Code) when the host's initialize listed that
+// server, and waits for the answer. Like Claude Code it never sends that call again after a repeated initialize.
 const readline = require('readline');
 const { randomUUID } = require('crypto');
 
@@ -11,6 +14,10 @@ const STEP_MS = Number(process.env.FAKE_STEP_MS || 300);
 const HOOK_AT = Number(process.env.FAKE_HOOK_AT || 2);
 const VERSION = process.env.FAKE_CLI_VERSION || '2.1.295'; // reported in system init (keep-compat.js checks it)
 const HOOKS_APPLIED = process.env.FAKE_HOOKS_APPLIED !== '0'; // '0': a CLI that takes a repeated initialize without confirming hooks
+const MCP_AT = Number(process.env.FAKE_MCP_AT || 0);
+const MCP_TOOL = process.env.FAKE_MCP_TOOL || 'slow';
+let mcpServers = []; // the sdkMcpServers the last initialize named
+let mcpN = 0;
 let cost = Number(process.env.FAKE_COST_BASE || 0); // cumulative total_cost_usd, +0.01 per turn
 const sid = 'fake-' + process.pid;
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -26,11 +33,12 @@ readline.createInterface({ input: process.stdin }).on('line', (l) => {
   if (m.type === 'control_request') {
     if (m.request && m.request.subtype === 'initialize') {
       inits++;
+      if (Array.isArray(m.request.sdkMcpServers)) mcpServers = m.request.sdkMcpServers.slice();
       const pre = m.request.hooks && m.request.hooks.PreToolUse;
       hookId = pre && pre[0] && pre[0].hookCallbackIds && pre[0].hookCallbackIds[0];
       // like Claude Code 2.1.29x on a repeated initialize from its stdin owner: the new hooks replace the old, and a
       // hook call still waiting for the old host is resolved here (a pending PreToolUse is denied, then retried)
-      if (inits > 1) for (const [rid, w] of [...waiting]) { waiting.delete(rid); w({ subtype: 'retry' }); }
+      if (inits > 1) for (const [rid, w] of [...waiting]) { if (rid.startsWith('cli_mcp_')) continue; waiting.delete(rid); w({ subtype: 'retry' }); } // an MCP call stays pending
     }
     out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: m.request.subtype === 'initialize' ? { commands: [], models: [], account: {}, fakePid: process.pid, ...(inits > 1 ? { hooks_applied: HOOKS_APPLIED, pending_permission_requests: [] } : {}) } : {} } });
   } else if (m.type === 'control_response') {
@@ -63,6 +71,14 @@ async function run() {
           hook += ` hook:${r.subtype}`;
           if (r.subtype !== 'retry') break;
         }
+      }
+      if (i === MCP_AT && mcpServers.includes('team')) {
+        const rid = `cli_mcp_${process.pid}_${i}`;
+        const answered = new Promise((r) => waiting.set(rid, r));
+        out({ type: 'control_request', request_id: rid, request: { subtype: 'mcp_message', server_name: 'team', message: { jsonrpc: '2.0', id: ++mcpN, method: 'tools/call', params: { name: MCP_TOOL, arguments: {}, _meta: { 'claudecode/toolUseId': `toolu_mcp_${i}` } } } } });
+        const r = await answered;
+        const res = r && r.response && r.response.mcp_response && r.response.mcp_response.result;
+        hook += ` mcp:${r.subtype === 'success' && res && res.content ? res.content.map((c) => c.text).join('') : `error ${r.error || JSON.stringify(r.response)}`}`;
       }
       out({ type: 'assistant', uuid: randomUUID(), session_id: sid, parent_tool_use_id: null, message: { id: `msg_${Date.now()}_${i}`, type: 'message', role: 'assistant', model: 'fake', content: [{ type: 'text', text: `step ${i}/${STEPS} pid ${process.pid} inits ${inits}${hook} re: ${text.slice(0, 40)}` }], stop_reason: null, usage: {} } });
     }

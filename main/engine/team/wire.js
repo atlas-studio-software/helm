@@ -20,7 +20,9 @@
 //     loadSdk() -> Promise<sdk>, z?, clock?, home?, ownerName? (fallback when settings team.ownerName is empty)
 //   });
 //   team.start() / team.stop() / team.refresh()          settings changes call refresh()
-//   team.sessionOptions(es, base, sdk, { keep }) -> SDK options   session.js _start (keep: the CLI goes to the broker)
+//   team.prepare()                                        the layer without running it (the engine's re-attach pass)
+//   team.sessionOptions(es, base, sdk, { keep, reattach }) -> SDK options   session.js _start (keep: the CLI goes to
+//                                                         the broker; reattach: rebuilt for a CLI kept through a restart)
 //   team.beforeSend(es, { text, origin, lastShownId })   typed approval (6.3)
 //   team.seedFor(es) -> '<position-seed>…' | null         a chat's first message (8.1)
 //   team.noteTurnEnd(es)                                  delivery queues + rollover
@@ -327,6 +329,8 @@ function createTeamWiring(o = {}) {
   // ---------------------------------------------------------------- session options (session.js _start)
   async function sessionOptions(es, base, sdk, hint = {}) {
     const pos = es.s.position;
+    // the re-attach pass runs before start(): a kept CEO or position chat needs the layer (not running yet) now
+    if (hint && hint.reattach && !live) prepare();
     if (pos) {
       if (!live) throw codeErr(problem && enabled() ? `Positions could not start: ${problem}` : 'Positions is off. Turn it on in Settings > Team to use this chat.', 'disabled');
       if (pos.ended) throw codeErr(`This chat of ${pos.name || pos.id} has ended; the position goes on in its newest chat.`, 'refused');
@@ -366,7 +370,10 @@ function createTeamWiring(o = {}) {
       const hk = opts.hooks || {};
       opts.hooks = { ...hk, PreToolUse: [...(hk.PreToolUse || []), own.pre], PostToolUse: [...(hk.PostToolUse || []), own.post] };
       if (opts.cwd && opts.cwd !== es.s.cwd && fs.existsSync(opts.cwd)) log('info', `team: ${es.s.id} runs in ${opts.cwd}`);
+      // session.js checks this before it re-attaches a kept position: its guard is in the hooks the CLI gets
+      if ((opts.hooks.PreToolUse || []).includes(guard)) Object.defineProperty(opts, '_teamGuarded', { value: true, enumerable: false });
       es.teamAttached = 'position';
+      es.teamBuiltOn = live;
       return opts;
     }
     if (!live) {
@@ -380,16 +387,18 @@ function createTeamWiring(o = {}) {
       const was = es.s.team ? es.s.team.company : null;
       if (c) es.s.team = { company: c.id, companyName: c.name }; else delete es.s.team;
       if ((c ? c.id : null) !== was) emitSession(es);
-      // Keep-through-restart (hint.keep: this CLI goes to the CLI broker). A chat in no company then runs WITHOUT the
-      // team server, so it stays keepable like any chat before Positions. Its only team tool is the deferred
-      // team_propose (action "company"), a rare convenience (an imported proposals file does the same),
-      // while keeping every ordinary chat alive through a restart is what the owner turned on. The server cannot
-      // simply ride along: it lives in this Helm process, so after a restart the kept CLI would list
-      // mcp__team__team_propose with nothing behind it, and nothing re-registers an in-process server on re-attach.
-      // A CEO chat keeps its server (team_ask and the roster are the point of it) and so is not kept (session.js).
+      // Keep-through-restart (hint.keep: this CLI goes to the CLI broker). The server lives in THIS Helm process; a CLI
+      // kept through a restart gets it rebuilt by the next Helm: the re-attach (hint.reattach, session.js) builds the
+      // same server again, the repeated initialize names it, and the CLI, which keeps its MCP client for it, sends
+      // its tools/call to the new one (a call the old Helm never answered is re-delivered by the broker, broker.js).
+      // So a CEO chat keeps its server AND is kept. A chat in no company still runs WITHOUT the server when kept: its
+      // only team tool is the deferred team_propose (action "company"), a rare convenience (an imported proposals
+      // file does the same), and such a chat must not depend on the team layer to survive a restart (a re-attach
+      // needs the rebuilt server, so Positions turned off in between would stop it).
       if (!c && hint && hint.keep) { es.teamAttached = null; return base; }
       const server = serverFor(c ? { kind: 'ceo', company: c.id, sessionId: es.s.id } : { kind: 'none', sessionId: es.s.id }, sdk);
       es.teamAttached = c ? 'ceo' : 'none';
+      es.teamBuiltOn = live;
       return { ...base, mcpServers: { ...(base.mcpServers || {}), team: server } };
     } catch (e) {
       log('warn', `team: no team server for ${es.s.id}: ${e.message}`);
@@ -422,8 +431,13 @@ function createTeamWiring(o = {}) {
   function noteTurnEnd(es) { if (live) live.runtime.noteTurnEnd(es.s.id); }
 
   // ---------------------------------------------------------------- start / stop
-  function start() {
-    if (live || !enabled()) return false;
+  // prepare(): the team layer exists (store, runtime with its tickets loaded, proposals, access, duties) but nothing
+  // in it runs yet: no delivery, recovery, duty, file watch or recycle. The engine's re-attach pass needs that much
+  // (a kept CEO or position chat gets its team server and guard rebuilt from it, and a team_ask the broker
+  // re-delivers finds its ticket) before start() lets the layer run; start() alone does both.
+  function prepare() {
+    if (live) return true;
+    if (!enabled()) return false;
     const root = rootOf();
     const why = safe(() => (o.rootProblem ? o.rootProblem([]) : null), null);
     if (why) { problem = why; log('warn', `team: Positions is on but the team folder can't be used: ${why}`); return false; }
@@ -495,6 +509,23 @@ function createTeamWiring(o = {}) {
         emit: (company) => emit('team.updated', { company }),
         ownerName,
       });
+      L.runtime.prime(); // tickets loaded (a re-delivered team_ask finds its own); nothing delivered before start()
+    } catch (e) {
+      log('error', `team: Positions failed to start: ${e.stack || e.message}`);
+      problem = e.message;
+      stop();
+      return false;
+    }
+    return true;
+  }
+
+  function start() {
+    if (!enabled() || (live && live.running)) return false;
+    if (!live && !prepare()) return false;
+    const L = live;
+    const { store } = L;
+    L.running = true;
+    try {
       store.watch();
       L.offs.push(store.on('change', (ev) => onStoreChange(ev)));
       for (const c of store.listCompanies()) safe(() => store.sweepRetired(c.id), null);
@@ -510,10 +541,11 @@ function createTeamWiring(o = {}) {
     // idle CLIs pick up (or drop) the team server at their next start. Only a chat whose team setup changes now is
     // closed: one in a company (it becomes a CEO) or one still carrying a server from an earlier start. A chat in no
     // company would gain only the deferred team_propose, so it keeps its warm CLI (and a CLI kept through a restart
-    // stays kept) and picks the tool up at its next natural start.
+    // stays kept) and picks the tool up at its next natural start. A chat whose server was built on THIS layer (a
+    // CEO chat the re-attach pass just kept) already has its setup.
     const { companyFor } = require('./match');
     const inCompany = (es) => !!safe(() => companyFor(es.s.cwd, store.listCompanies(), { teamRoot: store.root }), null);
-    recycle((es) => !es.s.position && (!!es.teamAttached || inCompany(es)));
+    recycle((es) => !es.s.position && es.teamBuiltOn !== L && (!!es.teamAttached || inCompany(es)));
     return true;
   }
 
@@ -531,7 +563,7 @@ function createTeamWiring(o = {}) {
   function refresh() {
     if (!enabled()) { if (live) { stop(); log('info', 'team: Positions off'); } emit('team.updated', { company: null }); return; }
     if (live && rootOf() !== startedRoot) stop();
-    if (!live) start(); else safe(() => live.duties.refresh(), null);
+    if (!live || !live.running) start(); else safe(() => live.duties.refresh(), null);
     emit('team.updated', { company: null });
   }
 
@@ -867,11 +899,11 @@ function createTeamWiring(o = {}) {
   return {
     methods,
     start, stop, refresh, sessionOptions, beforeSend, seedFor, noteTurnEnd,
-    enabled, running: () => !!live,
+    enabled, running: () => !!(live && live.running), prepare,
     companyFolders,
     excludeDirs: () => (enabled() ? [rootOf()] : []),
-    poke: (reason) => { if (live) safe(() => live.duties.poke(reason), null); },
-    status: () => ({ enabled: enabled(), running: !!live, problem, root: live ? live.root : rootOf() }),
+    poke: (reason) => { if (live && live.running) safe(() => live.duties.poke(reason), null); },
+    status: () => ({ enabled: enabled(), running: !!(live && live.running), problem, root: live ? live.root : rootOf() }),
     // tests and tools/team-live-smoke.js
     _live: () => live,
     _open: (cid, pid) => open(cid, pid),

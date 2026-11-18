@@ -23,7 +23,8 @@
 //   tempDir       sessions with a cwd under it are not listed as external (default os.tmpdir(); tests)
 //   getIdleCloseMs() → ms   close a session's CLI after this long idle (idle-reaper.js; 0 / absent = never)
 //   getKeep() → bool  Settings "Keep sessions running through a restart" (lane detach; HELM_DETACH=1/0 overrides)
-//   detach        tests: true/false overrides getKeep and HELM_DETACH; broker: false = no CLI broker at all
+//   detach        tests: true/false overrides getKeep and HELM_DETACH; broker: false = no CLI broker at all, an
+//                 object = that broker client (tests stand in for broker-client.js)
 //   brokerExecPath  what runs broker.js (default process.execPath with ELECTRON_RUN_AS_NODE=1)
 //   idleCheckMs   how often the idle reaper looks (default 60 s)
 //   childEnv(env) → env  the auth provider's env for every claude child (main/account.js: ANTHROPIC_API_KEY
@@ -262,7 +263,7 @@ function createEngine(options = {}) {
     // lane detach: with keepOn(), new CLIs run in a detached broker process (broker.js) so a Helm restart detaches
     // from running turns instead of killing them. The client always exists: a relaunched Helm re-attaches to what a
     // broker kept even if the setting was turned off since.
-    broker: options.broker === false ? null : require('./broker-client').createBrokerClient({ stateDir: userDataDir, execPath: options.brokerExecPath || process.execPath, log: (lvl, m) => log(lvl, m) }),
+    broker: options.broker === false ? null : options.broker && typeof options.broker === 'object' ? options.broker : require('./broker-client').createBrokerClient({ stateDir: userDataDir, execPath: options.brokerExecPath || process.execPath, log: (lvl, m) => log(lvl, m) }),
     keepOn: () => keepOn(),
     // false when the broker sits in a Windows job it could not leave (broker-launch.js): a restart may take it down
     keepSafe: () => { const b = ctx.broker; return !!b && jobSafe(b.job()) !== false; },
@@ -923,7 +924,9 @@ function createEngine(options = {}) {
     keepPass.then(() => { for (const es of sessions.values()) es.keepPending = null; });
   }
   // Positions: the runtime and duties start after the sessions are restored and the broker pass re-attached what it kept
-  // (a no-op while team.enabled is off).
+  // (a no-op while team.enabled is off). A kept CEO or position chat re-attaching in that pass prepares the layer
+  // first (wire.js prepare: its team server and guard are rebuilt from it), but nothing in it runs before this, so
+  // recovery sees which answer turns survived in the broker and no question is delivered beside a re-attaching CLI.
   Promise.resolve(keepPass).then(() => setImmediate(() => { try { ctx.team.start(); } catch (e) { log('error', `engine: Positions failed to start: ${e.message}`); } }));
 
   function snapshot() {

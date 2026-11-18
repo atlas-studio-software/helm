@@ -8,6 +8,9 @@
 //      its state file, and the stop is recorded for the next Helm
 //   2. refused: a CLI that does not confirm the new hooks -> reinit not ok (Helm falls back); end() stops it.
 //      Two spawns for the same session (a rewind) live side by side under their own keys.
+//   2b. team server: an in-process MCP call (mcp_message) the old host never answered is re-delivered by the broker to
+//      the new host's server, which answers it in the same call. 2c. guarded: a position CLI (meta.guarded) whose
+//      re-attach does not confirm its hooks is killed by the broker at once.
 //   3. handover: a broker from an older broker.js (another stamp) is listed as not current and drains
 //   4-7. The user's rule (2026-10-15): sessions survive ONLY a restart Helm performs (the restart intent). Raw CLIs
 //      (no SDK): a pipe close with no intent stops every CLI and the broker; a detach with no intent ends that CLI;
@@ -210,6 +213,130 @@ test('broker refused: a CLI that does not confirm the hooks -> reinit not ok; en
     assert.match(log, /end s2~a .*test: hooks not applied/);
   } finally {
     for (const p of extra) kill(p);
+    kill(brokerPid);
+    await sleep(300);
+    try { fs.rmSync(stateDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+// Positions: a CEO / position chat carries Helm's in-process `team` MCP server. Its tools/call requests are control
+// requests (mcp_message) to whoever owns the CLI's stdin; one the old Helm never answered is re-delivered by the
+// broker to the new Helm's server, which answers it in the same call (the CLI never sends it again itself).
+test('broker keep, team server: an MCP call the old host never answered is re-delivered to the new host\'s server', { timeout: 60000 }, async () => {
+  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'helm-broker-test-'));
+  const broker = createBrokerClient({ stateDir, execPath: process.execPath, env: brokerEnv, launch: (o) => require('../../main/engine/broker-launch').launchBroker({ ...o, useLauncher: false }) });
+  const cliEnv = { ...process.env, FAKE_STEPS: '3', FAKE_STEP_MS: '200', FAKE_HOOK_AT: '0', FAKE_MCP_AT: '2' };
+  const meta = { sdk: 'test-sdk', claudePath: null, team: { kind: 'ceo', company: 'northwind' } };
+  const server = (name, handler) => sdk.createSdkMcpServer({ name: 'team', version: '1.0.0', tools: [sdk.tool('slow', `${name}: waits like team_ask`, {}, handler)] });
+  let brokerPid = null;
+  try {
+    // 1. the first host: its handler is still waiting when Helm restarts
+    const seen1 = [];
+    let proc1 = null;
+    const in1 = new PushStream();
+    const q1 = sdk.query({ prompt: in1, options: {
+      pathToClaudeCodeExecutable: FAKE,
+      mcpServers: { team: server('host 1', async (args, extra) => { seen1.push(extra && extra._meta); return new Promise(() => {}); }) },
+      hooks: { PreToolUse: [{ hooks: [async () => ({ continue: true })] }] },
+      spawnClaudeCodeProcess: (o) => (proc1 = broker.spawnProcess({ key: 's5~a', sid: 's5', meta }, { ...o, command: process.execPath, args: [FAKE], env: cliEnv })),
+    } });
+    in1.push({ type: 'user', message: { role: 'user', content: 'ask' }, parent_tool_use_id: null });
+    const it1 = q1[Symbol.asyncIterator]();
+    const pump1 = (async () => { try { for (;;) { const r = await it1.next(); if (r.done) return; } } catch {} })();
+    for (const end = Date.now() + 10000; Date.now() < end && !seen1.length; await sleep(50));
+    assert.strictEqual(seen1.length, 1, 'the first host\'s server got the call');
+    assert.strictEqual(seen1[0]['claudecode/toolUseId'], 'toolu_mcp_2', 'with the tool_use id in _meta');
+    assert.ok((await broker.keepForRestart([proc1])).has(proc1));
+    assert.ok(proc1.detach());
+    try { q1.close(); } catch {}
+    await pump1;
+    const cliPid = proc1.pid;
+    brokerPid = stateOf(stateDir).pid;
+    await sleep(400);
+    const entry = (await broker.list()).find((e) => e.key === 's5~a');
+    assert.ok(entry && !entry.exited, 'kept');
+    assert.strictEqual(entry.pending, 1, 'the MCP call waits for a host');
+    assert.deepStrictEqual(entry.meta, meta, 'the team meta comes back for the re-attach');
+
+    // 2. the new host: a NEW server instance (never saw the MCP handshake) answers the re-delivered call
+    const seen2 = [];
+    const reinits = [];
+    const texts = [];
+    const q2 = sdk.query({ prompt: new PushStream(), options: {
+      pathToClaudeCodeExecutable: FAKE,
+      mcpServers: { team: server('host 2', async (args, extra) => { seen2.push(extra && extra._meta); return { content: [{ type: 'text', text: 'answer from host 2' }] }; }) },
+      hooks: { PreToolUse: [{ hooks: [async () => ({ continue: true })] }] },
+      spawnClaudeCodeProcess: () => broker.attachProcess(entry, { onReinit: (r) => reinits.push(r) }),
+    } });
+    const stuck = setTimeout(() => { try { q2.close(); } catch {} }, 15000); // an unanswered call fails the test, never hangs it
+    for await (const m of q2) {
+      const t = textOf(m);
+      if (t) texts.push(t);
+      if (m.type === 'result') break;
+    }
+    clearTimeout(stuck);
+    assert.strictEqual(reinits.length, 1);
+    assert.strictEqual(reinits[0].ok, true, JSON.stringify(reinits[0]));
+    assert.strictEqual(seen2.length, 1, 'the new host\'s server answered the call once');
+    assert.strictEqual(seen2[0]['claudecode/toolUseId'], 'toolu_mcp_2', 'the same tool call (runtime.ask finds its ticket by this id)');
+    assert.ok(texts.some((t) => /^step 2\/3 /.test(t) && / mcp:answer from host 2 /.test(t) && t.includes(`pid ${cliPid}`)), `the CLI got the answer in the same call: ${JSON.stringify(texts)}`);
+    assert.ok(texts.some((t) => t === `done pid ${cliPid} inits 2`), 'the turn finished in the same process');
+    const log = fs.readFileSync(path.join(stateDir, 'logs', 'broker.log'), 'utf8');
+    assert.match(log, /1 control request\(s\) were pending \(1 mcp_message, re-delivered once the CLI accepts\)/);
+    assert.match(log, /re-initialize s5~a: re-delivered 1 unanswered mcp_message request\(s\) to the new Helm/);
+    try { q2.close(); } catch {}
+  } finally {
+    kill(brokerPid);
+    await sleep(300);
+    try { fs.rmSync(stateDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+// A position (meta.guarded: bypassPermissions, its guard hook is the only gate) whose re-attach does not confirm the
+// hooks is killed by the broker itself, at once: not after Helm's fallback, not after a 5 s stdin grace.
+test('broker guarded: a position CLI whose re-attach does not confirm its hooks is killed at once by the broker', { timeout: 60000 }, async () => {
+  const sdk = await import('@anthropic-ai/claude-agent-sdk');
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'helm-broker-test-'));
+  const broker = createBrokerClient({ stateDir, execPath: process.execPath, env: brokerEnv, launch: (o) => require('../../main/engine/broker-launch').launchBroker({ ...o, useLauncher: false }) });
+  const cliEnv = { ...process.env, FAKE_STEPS: '1', FAKE_STEP_MS: '50', FAKE_HOOK_AT: '0', FAKE_HOOKS_APPLIED: '0' };
+  let brokerPid = null;
+  try {
+    let proc1 = null;
+    const in1 = new PushStream();
+    const q1 = sdk.query({ prompt: in1, options: {
+      pathToClaudeCodeExecutable: FAKE,
+      spawnClaudeCodeProcess: (o) => (proc1 = broker.spawnProcess({ key: 's6~a', sid: 's6', meta: { team: { kind: 'position', company: 'northwind', position: 'ops' }, guarded: true } }, { ...o, command: process.execPath, args: [FAKE], env: cliEnv })),
+    } });
+    in1.push({ type: 'user', message: { role: 'user', content: 'one' }, parent_tool_use_id: null });
+    for await (const m of q1) if (m.type === 'result') { assert.ok((await broker.keepForRestart([proc1])).has(proc1)); proc1.detach(); break; }
+    try { q1.close(); } catch {}
+    brokerPid = stateOf(stateDir).pid;
+    const entry = (await broker.list()).find((e) => e.key === 's6~a');
+    assert.strictEqual(entry.meta.guarded, true);
+    const reinits = [];
+    const exits = [];
+    const q2 = sdk.query({ prompt: new PushStream(), options: {
+      pathToClaudeCodeExecutable: FAKE,
+      hooks: { PreToolUse: [{ hooks: [async () => ({ continue: true })] }] },
+      spawnClaudeCodeProcess: () => { const p = broker.attachProcess(entry, { onReinit: (r) => reinits.push(r) }); p.on('exit', (c, s) => exits.push(Date.now())); return p; },
+    } });
+    const it = q2[Symbol.asyncIterator]();
+    const first = it.next().catch(() => null);
+    for (const end = Date.now() + 8000; Date.now() < end && !reinits.length; await sleep(20));
+    const t0 = Date.now();
+    assert.strictEqual(reinits.length, 1, 'the verdict arrived');
+    assert.strictEqual(reinits[0].ok, false);
+    // no broker.end(): the broker kills it by itself
+    for (const end = Date.now() + 4000; Date.now() < end && alive(entry.pid); await sleep(50));
+    assert.ok(!alive(entry.pid), 'the guarded CLI was killed');
+    assert.ok(Date.now() - t0 < 4000, `killed in ${Date.now() - t0} ms, well before the 5 s stdin grace`);
+    try { q2.close(); } catch {}
+    await first;
+    const log = fs.readFileSync(path.join(stateDir, 'logs', 'broker.log'), 'utf8');
+    assert.match(log, /re-initialize s6~a: success, hooks_applied false/);
+    assert.match(log, /kill s6~a pid \d+: guarded CLI: the re-attach did not confirm its hooks/);
+  } finally {
     kill(brokerPid);
     await sleep(300);
     try { fs.rmSync(stateDir, { recursive: true, force: true }); } catch {}

@@ -984,10 +984,24 @@ claude-haiku-5-5; needs 2.5 GB free and the headless-browser lock; summary `rest
   when finished") counts everything. **RPC** `app.restartCheck` -> `{ reasons, kept: [phrase] }`.
 - **Session.kept** (sessions.json only, not public): `{ at, key, pid, costBase, note }` written at detach. The next
   start re-attaches (keep-compat.js: protocol, SDK, claude path, conversation id, cwd, CLI >= 2.1.295, then
-  `hooks_applied` on the live re-attach within 15 s). Success: a system item `{ subtype: 'kept', text: 'Kept running
+  `hooks_applied` on the live re-attach within 15 s). For a position chat the cwd is checked against the rebuilt
+  options instead (its CLI runs in the position's workspace or worktree). Success: a system item `{ subtype: 'kept', text: 'Kept running
   through the restart', detail }`. Failure: the CLI is ended,
   `Session.restartNote` gets `reason` (shown as the note's first fact and told to Claude on Continue) and a system
   item `{ subtype: 'kept-failed', text }`.
+- **CEO and position chats** (Positions, lane keep) are kept like any chat. At spawn the broker meta records what the
+  CLI was started with: `meta.team = { kind: 'ceo', company } | { kind: 'position', company, position }`, and a
+  position also gets `meta.guarded: true`. On re-attach `team.sessionOptions(es, base, sdk, { keep: true, reattach:
+  true })` builds the same `team` server (a position: its full isolated options with prod-guard, team guard and
+  own-file observer hooks). The repeated `initialize` names the server again; the CLI keeps its MCP client, so its
+  `mcp_message` requests reach the new Helm, and the new hooks replace the dead Helm's. Not kept (the CLI is ended,
+  restart note with the reason) when the rebuilt setup differs from `meta.team`: Positions off, the folder no longer
+  in that company, another position, the guard not built (wire.js marks options built with the team guard), or a
+  position's run folder changed. A chat in no company still runs without the team server when kept.
+- **Broker re-delivery.** The CLI does not send again an `mcp_message` the old Helm never answered (it re-sends
+  permission prompts and settles pending hook calls itself). The broker re-delivers those to the new Helm right
+  after the CLI's response to the repeated initialize. A `meta.guarded` CLI whose repeated initialize does not come
+  back `success` with `hooks_applied` is killed by the broker at once, before anything else reaches it.
 - **RPC** `sessions.keepStatus` -> `{ on, override: 'on'|'off'|null, safe: true|false|null, job, kept, brokers:
   [{ pid, stamp, v, current, draining, job, clis, attached, orphaned }] }` (Settings > Helm status line). `safe:
   false` = the broker sits in a Windows job it could not leave (broker-launch.js): restarts still stop sessions.
@@ -1564,6 +1578,16 @@ team?: { company: "example-co", companyName: "Example Co" }         // a CEO ses
 returned without the answer; the ticket goes on) · `answered` · `late` (answered after its caller stopped waiting,
 or past expiry and still being worked on) · `expired` (2 h after the root ask) · `cancelled`. `refused` (with
 `reason`) appears only in `team.crosstalk`: a refused ask never becomes a live ticket, it is only logged.
+
+**Restarts** (POSITIONS.md 5.5). Tickets persist in `team-state.json`; an ask that waits also stores `waitUntil` (its
+deadline). With Keep sessions running on, CEO and position chats are kept (see "Keep sessions running through a
+restart"). A re-delivered `team_ask` / `colleague_ask` carries the same tool-use id (`_meta` `claudecode/toolUseId`):
+the runtime finds the ticket by tool-use id and asker and resumes it instead of asking twice. It waits until
+`waitUntil`; already answered: the answer returns in that call and the late-answer turn is dropped; deadline passed:
+`pending`. Start order: the engine's re-attach pass runs first; a kept CEO or position chat calls `team.prepare()`
+(store, runtime with tickets loaded via `runtime.prime()`, proposals, access, duties; nothing runs). `team.start()`
+after the pass runs delivery, recovery, duties, the file watch and the recycle, which skips a CEO chat whose server
+was built on this layer. A duty run kept through the restart records its result when its turn ends.
 
 ### RPC
 

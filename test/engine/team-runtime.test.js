@@ -792,6 +792,106 @@ test('9d. Restart after the answer turn was cut off: re-delivered with "Asked ag
   B.done();
 });
 
+// Keep sessions running through a restart, Positions: the CEO's CLI was kept, still inside its team_ask, and the
+// broker re-delivers that unanswered call to the new Helm with the same tool_use id.
+test('9f. Kept CEO chat: the re-delivered team_ask (same tool call) takes up its ticket, waits to the original deadline, answers in-call', async () => {
+  const clock = fakeClock(), sessions = fakeSessions(clock), state = memState(), store = fakeStore();
+  const A = setup({ clock, sessions, state, store });
+  const legal = await A.chat('legal');
+  A.track(A.askCeo('legal', 'Is the NDA signed?', { toolUseId: 'toolu_ask1' }));
+  await flush();
+  const id = A.last().id;
+  assert.equal(A.rt.get(id).waitUntil, T0 + 300 * SEC, 'the deadline of the in-call wait is kept on the ticket');
+  await A.at(30);
+  A.done();
+  assert.equal(clone(state.get('tickets')).find((t) => t.id === id).asker, 'lost', 'a live wait is saved as lost');
+  legal.turnWaiters = []; // the answer turn runs on in the broker
+  A.ceo.turnActive = true; // and so does the CEO's turn, inside its tool call
+  // the next Helm: the layer is prepared (tickets loaded) but not running while the re-attach pass runs
+  const B = setup({ clock, sessions, state, store, noStart: true });
+  B.rt.prime();
+  const n = B.rt._internals.tickets.size;
+  const call = B.track(B.askCeo('legal', 'Is the NDA signed?', { toolUseId: 'toolu_ask1' }));
+  await flush();
+  assert.equal(B.rt._internals.tickets.size, n, 'no second ticket');
+  assert.equal(B.rt.get(id).asker, 'waiting');
+  assert.equal(B.deadline(id), T0 + 300 * SEC, 'waits only to the original deadline');
+  B.rt.start();
+  await flush();
+  assert.equal(legal.turnWaiters.length, 1, 'recovery attached to the answer turn that survived');
+  assert.equal(B.asks(legal).length, 1, 'never asked twice');
+  await B.at(50);
+  await B.endTurn(legal, 'Signed on Friday.');
+  assert.equal(call.done, true);
+  assert.equal(call.value.status, 'answered');
+  assert.equal(call.value.answer, 'Signed on Friday.');
+  assert.equal(B.rt.get(id).asker, 'received');
+  B.ceo.turnActive = false;
+  await B.at(200);
+  assert.equal(B.answers(B.ceo).length, 0, 'no late-answer turn: it was answered in the same call');
+  assert.equal(B.rt._internals.outbox.length, 0);
+  // another tool call (or another asker) with the same question is a new ask
+  B.track(B.askCeo('legal', 'Is the NDA signed?', { toolUseId: 'toolu_other' }));
+  await flush();
+  assert.equal(B.rt._internals.tickets.size, n + 1);
+  B.done();
+});
+
+test('9g. Kept CEO chat: answered while Helm was away -> the re-delivered call gets the answer and the late-answer turn is dropped', async () => {
+  const clock = fakeClock(), sessions = fakeSessions(clock), state = memState(), store = fakeStore();
+  const A = setup({ clock, sessions, state, store });
+  const legal = await A.chat('legal');
+  A.track(A.askCeo('legal', 'Is the NDA signed?', { toolUseId: 'toolu_ask2' }));
+  await flush();
+  const id = A.last().id;
+  await A.at(30);
+  A.done();
+  legal.turnWaiters = [];
+  A.ceo.turnActive = true;
+  const B = setup({ clock, sessions, state, store });
+  await flush();
+  await B.at(40);
+  await B.endTurn(legal, 'Yes, signed.'); // the answer turn ends before the CEO's call is re-delivered
+  assert.equal(B.rt.get(id).state, 'answered');
+  assert.equal(B.rt._internals.outbox.length, 1, 'queued as a late answer (the asker was lost)');
+  assert.equal(B.answers(B.ceo).length, 0, 'not while the CEO chat is in its turn');
+  const call = B.track(B.askCeo('legal', 'Is the NDA signed?', { toolUseId: 'toolu_ask2' }));
+  await flush();
+  assert.equal(call.done, true);
+  assert.equal(call.value.status, 'answered');
+  assert.equal(call.value.answer, 'Yes, signed.');
+  assert.equal(B.rt.get(id).asker, 'received');
+  assert.equal(B.rt._internals.outbox.length, 0, 'the late answer is dropped');
+  B.ceo.turnActive = false;
+  await B.at(120);
+  assert.equal(B.answers(B.ceo).length, 0, 'never delivered twice');
+  B.done();
+});
+
+test('9h. Kept CEO chat: the original deadline passed while Helm was away -> pending at once; the answer comes late as before', async () => {
+  const clock = fakeClock(), sessions = fakeSessions(clock), state = memState(), store = fakeStore();
+  const A = setup({ clock, sessions, state, store });
+  const legal = await A.chat('legal');
+  A.track(A.askCeo('legal', 'Is the NDA signed?', { toolUseId: 'toolu_ask3', waitS: 60 }));
+  await flush();
+  const id = A.last().id;
+  await A.at(30);
+  A.done();
+  legal.turnWaiters = [];
+  const B = setup({ clock, sessions, state, store });
+  await B.at(90);
+  const call = B.track(B.askCeo('legal', 'Is the NDA signed?', { toolUseId: 'toolu_ask3', waitS: 60 }));
+  await flush();
+  assert.equal(call.done, true);
+  assert.equal(call.value.status, 'pending');
+  assert.equal(B.rt.get(id).asker, 'pending');
+  await B.at(100);
+  await B.endTurn(legal, 'Signed.');
+  await B.at(110);
+  assert.equal(B.answers(B.ceo).length, 1, 'the late answer as a turn');
+  B.done();
+});
+
 test('10a. Order behind the owner: report, then colleague, then duty; runDuty resolves done with the final text', async () => {
   const h = setup();
   const legal = await h.chat('legal'), mkt = await h.chat('marketing');

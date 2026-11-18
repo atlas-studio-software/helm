@@ -40,6 +40,14 @@
 // Helm never answered is resolved by the CLI (a pending PreToolUse is denied with a retry notice, then retried).
 // The broker reports the CLI's answer as a `reinit` frame BEFORE the response line, so Helm can fall back (stop +
 // restart note) when hooks were not applied. Then it replays the current turn's lines (no deltas, no control frames).
+// In-process MCP servers (Positions: the `team` server of a CEO or position chat) ride along: the repeated initialize
+// names them again and the CLI keeps its live MCP client for each (only the host end is new), so their tools/call
+// requests (control_request subtype mcp_message) simply reach the new Helm's server. What the CLI does NOT do is send
+// again an mcp_message the old Helm never answered (it re-sends permission prompts and settles hook calls, nothing
+// else), so the broker re-delivers those itself right after the CLI accepted the repeated initialize: a team_ask that
+// was waiting when Helm restarted is answered by the new Helm (team/runtime.js picks its ticket up again by the tool
+// call's id). A CLI spawned with meta.guarded (a position: bypassPermissions, its guard hook is the only gate) whose
+// repeated initialize does not come back hooks_applied is killed here at once, before anything else reaches it.
 //
 // Only a restart Helm performs keeps a CLI (the user, 2026-10-15: "when i manually close helm everything needs to stop").
 // The broker cannot tell a crash from Task Manager's End task, a Windows shutdown or sign-out, or a quit, so:
@@ -237,7 +245,20 @@ function main(stateDir) {
       log(`re-initialize ${c.key}: ${m.response.subtype}${m.response.error ? ` (${m.response.error})` : ''}, hooks_applied ${r.hooks_applied}, pending_permission_requests ${pending == null ? '-' : pending}, ${ms} ms`);
       // the verdict goes out BEFORE the response line: Helm decides keep-or-fall-back before the SDK reacts
       if (c.client) send(c.client, { t: 'reinit', ok, subtype: m.response.subtype || null, hooksApplied: r.hooks_applied === true, pending, error: m.response.error || null, ms });
+      const redeliver = c.reinit.redeliver || [];
       c.reinit = null;
+      if (!ok && c.meta && c.meta.guarded) {
+        // a position whose guard is not confirmed: nothing more reaches either side, the tree goes now
+        c.clientReady = false;
+        killTree(c, 'guarded CLI: the re-attach did not confirm its hooks');
+        return;
+      }
+      if (ok && redeliver.length) {
+        record(c, line, type); // the response first: the SDK has its answer before the calls arrive
+        for (const x of redeliver) { c.pending.set(x.id, x.line); record(c, x.line, 'control_request'); }
+        log(`re-initialize ${c.key}: re-delivered ${redeliver.length} unanswered mcp_message request(s) to the new Helm`);
+        return;
+      }
     } else if (type === 'control_response' && c.init && !c.init.resp && m.response && m.response.request_id === c.init.reqId) c.init.resp = m.response;
     else if (type === 'control_request' && m.request_id) c.pending.set(m.request_id, line);
     else if (type === 'control_cancel_request' && m.request_id) c.pending.delete(m.request_id);
@@ -250,12 +271,18 @@ function main(stateDir) {
       if (typeof m.total_cost_usd === 'number') c.lastCost = m.total_cost_usd;
       if (m.session_id) c.claudeSessionId = m.session_id;
     } else if (type === 'assistant' || type === 'stream_event') markBusy(c); // a turn the CLI started on its own (agent notification)
+    record(c, line, type);
+  }
+  // keep a stdout line for a later replay and pass it to the attached Helm
+  function record(c, line, type) {
     c.lines.push({ seq: ++c.seq, line, type });
     c.bytes += line.length;
     while (c.lines.length > MAX_LINES || c.bytes > MAX_BYTES) { const x = c.lines.shift(); c.bytes -= x.line.length; c.trimmedTo = x.seq; }
     c.lastOutAt = Date.now();
     if (c.client && c.clientReady) send(c.client, { t: 'out', d: line });
   }
+  // an unanswered control request the CLI does not send again after a repeated initialize: an in-process MCP call
+  const isMcpCall = (line) => { try { const m = JSON.parse(line); return !!(m && m.request && m.request.subtype === 'mcp_message'); } catch { return false; } };
 
   // What a re-attaching client missed: the current turn (or the one that ended while nobody was attached), minus
   // stream deltas (the whole message follows) and control frames (pending ones come back through the CLI).
@@ -278,12 +305,14 @@ function main(stateDir) {
     if (m && m.type === 'control_request' && m.request && m.request.subtype === 'initialize') {
       if (c.init && c.init.resp) {
         // a re-attached SDK: the CLI takes a repeated initialize from whoever owns its stdin. Forward it, replay.
-        c.reinit = { reqId: m.request_id, at: Date.now() };
+        // an unanswered mcp_message waits for the CLI's answer to this initialize, then goes to the new Helm (onOut)
+        const redeliver = [...c.pending].filter(([, l]) => isMcpCall(l)).map(([id, l]) => ({ id, line: l }));
+        c.reinit = { reqId: m.request_id, at: Date.now(), redeliver };
         try { c.child.stdin.write(line + '\n'); } catch (e) { log(`stdin write ${c.key} failed: ${e.message}`); }
         const replay = replayFor(c);
         for (const l of replay) send(sock, { t: 'out', d: l });
-        log(`attach ${c.key}: forwarded initialize to the CLI; replayed ${replay.length} line(s)${c.trimmedTo && c.trimmedTo >= c.turnSeq ? ` (turn trimmed to line ${c.trimmedTo})` : ''}; ${c.pending.size} control request(s) were pending`);
-        c.pending.clear(); // the CLI resolves or re-sends them itself on the repeated initialize
+        log(`attach ${c.key}: forwarded initialize to the CLI; replayed ${replay.length} line(s)${c.trimmedTo && c.trimmedTo >= c.turnSeq ? ` (turn trimmed to line ${c.trimmedTo})` : ''}; ${c.pending.size} control request(s) were pending${redeliver.length ? ` (${redeliver.length} mcp_message, re-delivered once the CLI accepts)` : ''}`);
+        c.pending.clear(); // the CLI resolves or re-sends the others itself on the repeated initialize
         c.clientReady = true;
         return;
       }
