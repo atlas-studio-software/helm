@@ -602,7 +602,7 @@ test('fieldChanges / proposalChanges / draftPowerChips', () => {
   assert.deepEqual([ch.duties.added.map((d) => d.title), ch.duties.changed.map((d) => d.title), ch.duties.removed.map((d) => d.title)], [['Quarterly'], ['Weekly (new)'], ['Old duty']]);
   assert.ok(ch.duties.added[0].trigger && !/^Schedule /.test(ch.duties.added[0].trigger));
   assert.deepEqual([ch.brief.added, ch.excess.map((x) => x.why)], [1, ['General Counsel has no Bash']]);
-  assert.deepEqual(M.proposalChanges({ action: 'create', draft: {} }), { fields: [], brief: null, powers: null, duties: null, excess: [] });
+  assert.deepEqual(M.proposalChanges({ action: 'create', draft: {} }), { fields: [], brief: null, powers: null, duties: null, excess: [], dept: null });
 
   const chips = M.draftPowerChips({ read: ['$workspace', 'C:/Users/you/old/'], write: ['$workspace'], tools: ['Read', 'WebFetch'], bash: 'on', agents: true, worktree: false },
     { kind: 'company' }, [{ power: 'read', value: 'C:/Users/you/old', by: 'company' }, { power: 'tools', value: 'WebFetch', by: 'tax' }, { power: 'bash', value: 'on', max: 'off', by: 'legal' }]);
@@ -830,4 +830,130 @@ test('PROTOCOL shapes: status active|paused + busy, pending requests -> waiting,
   assert.equal(tools.find((i) => i.value === 'NotebookEdit').limitedBy, 'Tax Specialist');
   assert.equal(tools.find((i) => i.value === 'Read').limitedBy, null);
   assert.equal(rows.find((r) => r.key === 'bash').limitedBy, 'General Counsel');
+});
+
+// ---------------------------------------------------------------- departments (spec 2.4)
+// qa (no department) first in the CEO's order, then legal (heads Legal), finance (heads Finance), marketing (heads Marketing)
+const D = (id, name, parent, dept, head) => R(id, name, parent, dept ? { department: dept, departmentHead: head } : {});
+const DTREE = [
+  D('qa', 'QA Engineer', null),
+  D('legal', 'General Counsel', null, 'Legal', 'legal'),
+  D('tax', 'Tax Specialist', 'legal', 'Legal', 'legal'),
+  D('payroll', 'Payroll Tax Specialist', 'tax', 'Legal', 'legal'),
+  D('contracts', 'Contracts Manager', 'legal', 'Legal', 'legal'),
+  D('finance', 'Controller', null, 'Finance', 'finance'),
+  D('marketing', 'Marketing Manager', null, 'Marketing', 'marketing'),
+  D('social', 'Social Media Manager', 'marketing', 'Marketing', 'marketing'),
+  D('ops', 'Operations Lead', null),
+];
+test('departments: the CEO top level grouped by department in report order, then "No department"; headers carry name / head / count', () => {
+  const rows = visibleRows(DTREE, {});
+  assert.deepEqual(rows.map((r) => r.id), [CEO, 'legal', 'tax', 'payroll', 'contracts', 'finance', 'marketing', 'social', 'qa', 'ops']);
+  const g = rows.filter((r) => r.group).map((r) => [r.id, r.group.name, r.group.headId, r.group.headName, r.group.count, !!r.group.none]);
+  assert.deepEqual(g, [['legal', 'Legal', 'legal', 'General Counsel', 4, false], ['finance', 'Finance', 'finance', 'Controller', 1, false],
+    ['marketing', 'Marketing', 'marketing', 'Marketing Manager', 2, false], ['qa', null, null, '', 2, true]]);
+  assert.ok(!('roots' in rows[1].group), 'the header carries no root list');
+  const b = byId(rows);
+  // levels, sets and parents are the tree's, in the grouped order; staff rows carry no header
+  assert.deepEqual([b.legal.level, b.legal.posinset, b.legal.setsize, b.qa.posinset, b.ops.posinset, b.ops.setsize], [2, 1, 5, 4, 5, 5]);
+  assert.deepEqual([b.tax.group, b.payroll.group, b.social.group, b.ops.group], [undefined, undefined, undefined, undefined]);
+  // the keyboard walks tree items only: a header is never a stop
+  assert.deepEqual(treeKey(rows, 'contracts', 'ArrowDown'), { focus: 'finance' });
+  assert.deepEqual(treeKey(rows, 'social', 'ArrowDown'), { focus: 'qa' });
+  assert.deepEqual(treeKey(rows, 'finance', 'ArrowLeft'), { focus: CEO });
+  // collapse, phone indent and the crumb work inside a department as before
+  const shut = visibleRows(DTREE, { legal: false });
+  assert.deepEqual(shut.map((r) => r.id), [CEO, 'legal', 'finance', 'marketing', 'social', 'qa', 'ops']);
+  assert.equal(byId(shut).legal.group.count, 4, 'the count is everyone in it, shown or not');
+  const ph = byId(visibleRows(DTREE, {}, { phone: true }));
+  assert.deepEqual([ph.legal.indent, ph.payroll.indent, ph.legal.group.name], [12, 36, 'Legal']);
+  // only departments, no rest: no "No department" header
+  assert.deepEqual(visibleRows(DTREE.filter((r) => r.id !== 'qa' && r.id !== 'ops'), {}).filter((r) => r.group).map((r) => r.group.name), ['Legal', 'Finance', 'Marketing']);
+});
+test('departments: none in the company renders exactly as before (no header, same order, no group key)', () => {
+  const rows = visibleRows(TREE, {});
+  assert.ok(rows.every((r) => !('group' in r)));
+  assert.equal(M.deptGroups(TREE), null);
+  assert.deepEqual(M.deptList(TREE), []);
+  // a staff row's department alone (an orphan whose head is gone) still groups it, so nothing is lost
+  const orphan = [D('tax', 'Tax Specialist', 'gone', 'Legal', 'gone'), D('qa', 'QA Engineer', null)];
+  assert.deepEqual(visibleRows(orphan, {}).filter((r) => r.group).map((r) => [r.id, r.group.name, r.group.count]), [['tax', 'Legal', 1], ['qa', null, 1]]);
+});
+test('deptOf / deptList: a head heads it, staff name the head, none outside; a head known from its own position.json', () => {
+  const names = Object.fromEntries(DTREE.map((r) => [r.id, r.name]));
+  const by = byId(DTREE);
+  assert.deepEqual(M.deptOf(by.legal, null, names), { name: 'Legal', head: 'legal', isHead: true, headName: 'General Counsel' });
+  assert.deepEqual(M.deptOf(by.payroll, null, names), { name: 'Legal', head: 'legal', isHead: false, headName: 'General Counsel' });
+  assert.equal(M.deptOf(by.qa, { id: 'qa', parent: null }, names), null);
+  assert.deepEqual(M.deptOf(null, { id: 'finance', name: 'Controller', parent: null, department: 'Finance' }), { name: 'Finance', head: 'finance', isHead: true, headName: 'Controller' });
+  assert.equal(M.deptOf(null, { id: 'tax', parent: 'legal', department: 'Legal' }), null, 'department on a non-top-level position.json is ignored');
+  assert.deepEqual(M.deptList(DTREE), [{ name: 'Legal', headId: 'legal', headName: 'General Counsel', count: 4 }, { name: 'Finance', headId: 'finance', headName: 'Controller', count: 1 },
+    { name: 'Marketing', headId: 'marketing', headName: 'Marketing Manager', count: 2 }]);
+});
+test('proposal names: p.names first for every id (title, Reports to, cut rows), the view map next, the id last', () => {
+  const view = { tax: 'Tax (old view name)' };
+  const p = { action: 'create', parent: 'tax', draft: { name: 'VAT Specialist', parent: 'tax', scope: { kind: 'company' } }, names: { tax: 'Tax Specialist', legal: 'General Counsel' },
+    excess: [{ power: 'bash', value: 'on', max: 'off', by: 'legal' }, { power: 'tools', value: 'WebFetch', by: 'tax' }, { power: 'parent', value: 'tax', by: null }] };
+  assert.equal(proposalTitle(p, view), 'New position: VAT Specialist under Tax Specialist');
+  assert.equal(proposalTitle({ ...p, names: undefined }, view), 'New position: VAT Specialist under Tax (old view name)');
+  assert.equal(proposalTitle({ ...p, names: undefined }, {}), 'New position: VAT Specialist under tax', 'nothing known: the id as before');
+  const ch = M.proposalChanges(p, {});
+  assert.deepEqual(ch.excess.map((x) => (x.waits ? x.label : x.why)), ['General Counsel has no Bash', 'Tax Specialist does not have it', 'Its manager (Tax Specialist) is not approved yet']);
+  const edit = { action: 'edit', target: 'tax', diff: { parent: { from: 'legal', to: 'finance' } }, names: { tax: 'Tax Specialist', legal: 'General Counsel', finance: 'Controller' } };
+  assert.deepEqual(M.proposalChanges(edit, (id) => `guess ${id}`).fields.map((f) => [f.label, f.from, f.to]), [['Reports to', 'General Counsel', 'Controller']], 'a names function is wrapped too');
+  assert.deepEqual(M.cardNames({ names: { a: 'A' } }, { a: 'x', b: 'B' }), { a: 'A', b: 'B' });
+  const view2 = { b: 'B' };
+  assert.equal(M.cardNames({}, view2), view2, 'no card names: the same map back');
+});
+test('department proposals: deptChange in words, titles when the engine sent none, a Department field row from diff.department', () => {
+  const names = { legal: 'General Counsel', tax: 'Tax Specialist', finance: 'Controller' };
+  const W = (dc, who) => M.deptWords(dc, names, who);
+  assert.equal(W({ kind: 'new', name: 'Legal', head: 'legal' }), 'Starts the Legal department, headed by General Counsel');
+  assert.equal(W({ kind: 'rename', from: 'Legal', name: 'Legal & Compliance', head: 'legal', headName: 'General Counsel' }), 'Renames the Legal department to Legal & Compliance');
+  assert.equal(W({ kind: 'close', name: 'Legal', head: 'legal' }), 'Closes the Legal department');
+  assert.equal(W({ kind: 'move', from: 'Legal', name: 'Finance', head: 'finance', headName: 'Controller' }, 'Tax Specialist'), 'Moves Tax Specialist from Legal to Finance (head: Controller)');
+  assert.equal(W({ kind: 'move', from: 'Legal', name: null, head: null, headName: null }, 'Tax Specialist'), 'Moves Tax Specialist out of Legal');
+  assert.equal(W({ kind: 'move', from: null, name: 'Finance', head: 'finance' }, 'QA Engineer'), 'Moves QA Engineer into Finance (head: Controller)');
+  assert.equal(W({ kind: 'join', name: 'Legal', head: 'legal' }), 'In Legal (head: General Counsel)');
+  assert.equal(W(null), ''); assert.equal(W({ kind: 'other' }), '');
+  const T = (p) => proposalTitle({ names, ...p });
+  assert.equal(T({ action: 'create', target: 'bizdev', draft: { name: 'Head of Business Development', parent: null }, deptChange: { kind: 'new', name: 'Business Development', headName: 'Head of Business Development' } }),
+    'New department: Business Development, headed by Head of Business Development');
+  assert.equal(T({ action: 'edit', target: 'legal', deptChange: { kind: 'rename', from: 'Legal', name: 'Legal & Compliance' } }), 'Rename department: Legal to Legal & Compliance');
+  assert.equal(T({ action: 'edit', target: 'legal', deptChange: { kind: 'close', name: 'Legal' } }), 'Close department: Legal');
+  assert.equal(T({ action: 'retire', target: 'legal', deptChange: { kind: 'close', name: 'Legal' } }), 'Retire General Counsel; the Legal department closes');
+  assert.equal(T({ action: 'edit', target: 'tax', deptChange: { kind: 'move', from: 'Legal', name: 'Finance' } }), 'Move Tax Specialist from Legal to Finance');
+  assert.equal(T({ action: 'edit', target: 'tax', deptChange: { kind: 'move', from: 'Legal', name: null } }), 'Move Tax Specialist out of Legal', 'the engine words it the same way');
+  assert.equal(T({ action: 'create', target: 'vat', parent: 'tax', draft: { name: 'VAT Specialist', parent: 'tax' }, deptChange: { kind: 'join', name: 'Legal' } }), 'New position: VAT Specialist under Tax Specialist');
+  assert.equal(T({ title: 'Engine title wins', deptChange: { kind: 'new', name: 'X' } }), 'Engine title wins');
+  // diff.department: a field row; the sentence is dropped when the row already says it (rename / close), kept for a move / join
+  assert.deepEqual(M.fieldChanges({ department: { from: 'Legal', to: 'Legal & Compliance' } }).map((f) => [f.key, f.label, f.from, f.to]), [['department', 'Department', 'Legal', 'Legal & Compliance']]);
+  assert.deepEqual(M.fieldChanges({ department: { from: null, to: 'Legal' } }).map((f) => [f.from, f.to]), [['No department', 'Legal']]);
+  const rn = M.proposalChanges({ action: 'edit', target: 'legal', diff: { department: { from: 'Legal', to: 'Legal & Compliance' } }, deptChange: { kind: 'rename', from: 'Legal', name: 'Legal & Compliance', head: 'legal' } }, names);
+  assert.deepEqual([rn.fields.map((f) => f.key), rn.dept], [['department'], null]);
+  const mv = M.proposalChanges({ action: 'edit', target: 'tax', diff: { parent: { from: 'legal', to: 'finance' } }, deptChange: { kind: 'move', from: 'Legal', name: 'Finance', head: 'finance' } }, names);
+  assert.deepEqual(mv.dept, { kind: 'move', name: 'Finance', from: 'Legal', headName: 'Controller', text: 'Moves Tax Specialist from Legal to Finance (head: Controller)' });
+  const jn = M.proposalChanges({ action: 'create', target: 'vat', draft: { name: 'VAT Specialist', parent: 'tax' }, deptChange: { kind: 'join', name: 'Legal', head: 'legal', headName: 'General Counsel' } }, names);
+  assert.equal(jn.dept.text, 'In Legal (head: General Counsel)');
+});
+test('mock: Example Co has Legal / Marketing / Finance (QA outside), rows carry department + departmentHead; Harbor Books has none', async () => {
+  const { rpc } = createMockTeam({ now: NOW });
+  const got = await rpc('team.get', { company: 'example-co' });
+  const by = byId(got.tree);
+  assert.deepEqual(['legal', 'tax', 'payroll', 'contracts'].map((id) => [by[id].department, by[id].departmentHead]), Array(4).fill(['Legal', 'legal']));
+  assert.deepEqual([by.social.department, by.social.departmentHead, by.finance.departmentHead], ['Marketing', 'marketing', 'finance']);
+  assert.ok(!('department' in by.qa) && !('departmentHead' in by.qa), 'outside any department: no keys');
+  const heads = visibleRows(got.tree, {}).filter((r) => r.group).map((r) => (r.group.none ? 'No department' : `${r.group.name}:${r.group.headName}`));
+  assert.deepEqual(heads.slice(0, -1).sort(), ['Finance:Controller', 'Legal:General Counsel', 'Marketing:Marketing Manager']);
+  assert.equal(heads[heads.length - 1], 'No department');
+  const legal = await rpc('team.position', { company: 'example-co', id: 'legal' });
+  assert.equal(legal.position.department, 'Legal');
+  const open = splitProposals(got.proposals).open;
+  const nd = open.find((p) => p.deptChange?.kind === 'new');
+  assert.ok(nd, 'an open new-department proposal');
+  assert.equal(proposalTitle(nd), 'New department: Business Development, headed by Head of Business Development');
+  assert.ok(got.proposals.every((p) => p.names && typeof p.names === 'object'), 'every card carries names');
+  const hb = await rpc('team.get', { company: 'harbor-books' });
+  assert.ok(hb.tree.length > 0 && hb.tree.every((r) => !('department' in r)));
+  assert.ok(visibleRows(hb.tree, {}).every((r) => !('group' in r)), 'the backward-compat company: no headers');
 });

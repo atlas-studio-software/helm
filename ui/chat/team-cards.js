@@ -19,7 +19,7 @@ import { rpc, send, toast, sessions, itemsBySession } from '../lib/store.js';
 import { openSession } from '../shell/state.js';
 import { now, useTicker, isOpen, toggle } from './state.js';
 import { memo, fmtTime, fmtDuration, basename, resultText } from './util.js';
-import { proposalChanges, excessHeadline, draftPowerChips, scopeWords, pathWords, cronWords, triggerWords as dutyTriggerWords, baseName, pathKey } from '../lib/positions-model.js';
+import { proposalChanges, proposalTitle, excessHeadline, draftPowerChips, scopeWords, pathWords, cronWords, triggerWords as dutyTriggerWords, baseName, pathKey } from '../lib/positions-model.js';
 
 export const ASK_TOOLS = new Set(['mcp__team__team_ask', 'mcp__team__colleague_ask']);
 const ORIGINS = new Set(['ask', 'duty', 'answer', 'seed']);
@@ -30,7 +30,14 @@ export const isTeamCard = (it) => !!it && ((it.type === 'tool' && ASK_TOOLS.has(
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 // "payroll-tax" -> "Payroll tax"; a name ("Tax Specialist") stays as it is
 export const nameOf = (id) => { const s = String(id ?? '').replace(/[-_]+/g, ' ').trim(); return s ? s[0].toUpperCase() + s.slice(1) : ''; };
-const nm = (x) => (x && typeof x === 'object' ? str(x.name) || nameOf(x.id) : nameOf(x));
+// a position id's real name from the open position chats (any company), else the id in words. Ids are slugs of the
+// name only by chance ("legal" is General Counsel), so a known name always beats nameOf.
+export const posName = (id) => {
+  if (id == null || id === '') return '';
+  for (const s of sessions.value || []) { const q = s && s.position; if (q && q.id === id && str(q.name)) return str(q.name); }
+  return nameOf(id);
+};
+const nm = (x) => (x && typeof x === 'object' ? str(x.name) || posName(x.id) : posName(x));
 const firstLine = (s) => String(s ?? '').trim().split('\n')[0];
 // a coarse clock for state lines: 45s, 2m, 1h 5m (the answered time uses fmtDuration: 3m 40s)
 export function ago(ms) {
@@ -108,7 +115,7 @@ export function normChain(chain, at = Date.now(), wall = Date.now()) {
     const ds = detailState(c.detail);
     let state = normState(c.state);
     if (ds) state = ds.state;
-    return { ticket: c.ticket || null, parent: linked ? pOf(c) : (i ? rows[i - 1].ticket || null : null), to: c.to || '', name: str(c.name) || nameOf(c.to),
+    return { ticket: c.ticket || null, parent: linked ? pOf(c) : (i ? rows[i - 1].ticket || null : null), to: c.to || '', name: str(c.name) || posName(c.to),
       state, access: state === 'access' || c.access === true, note: youWords((ds && ds.note) || str(c.note) || reasonOf(c.state)), detail: str(c.detail),
       elapsed: liveSince(c.ticket, c.sinceMs ?? c.since, at, wall), took: Number.isFinite(c.tookMs) ? c.tookMs : null, depth };
   });
@@ -159,8 +166,8 @@ export function askModel(item, at = Date.now(), wall = Date.now()) {
   let root = chain.find((c) => ticket && c.ticket === ticket) || chain.find((c) => c.depth === 0) || null;
   const ds = detailState(team.detail);   // the root ticket's words, also when the event carried no chain
   if (ds && root && !detailState(root.detail)) { root.state = ds.state; root.access = ds.state === 'access'; root.note = ds.note || root.note; }
-  if (!root && ds && ticket) root = { ticket, parent: null, to: input.to || '', name: nameOf(input.to) || 'the position', state: ds.state, access: ds.state === 'access', note: ds.note, detail: str(team.detail), elapsed: null, took: null, depth: 0 };
-  const to = root?.name || nameOf(input.to) || nameOf(res?.from) || 'the position';
+  if (!root && ds && ticket) root = { ticket, parent: null, to: input.to || '', name: posName(input.to) || 'the position', state: ds.state, access: ds.state === 'access', note: ds.note, detail: str(team.detail), elapsed: null, took: null, depth: 0 };
+  const to = root?.name || posName(input.to) || posName(res?.from) || 'the position';
   let st = normState(team.state) || root?.state || normState(res?.status);
   if (ds) st = ds.state;
   const stopped = item.status === 'error' && !!item.interrupted;
@@ -376,11 +383,11 @@ export function askedByModel(item, session) {
   }
   if (o === 'answer') {
     const t = parseTagged(text, 'helm-answer'), a = t?.attrs || {};
-    const from = nm(item.ask?.from) || nameOf(a.from) || 'A position';
+    const from = nm(item.ask?.from) || posName(a.from) || 'A position';
     const expired = a.state === 'expired', adds = a.kind === 'followup' || a.state === 'followup';
     return { kind: 'answer', icon: expired ? 'clock' : 'message', md: true, text: t ? t.body : text.trim(), files: [],
       label: expired ? `No answer from ${from}` : adds ? `${from} adds` : `Answer from ${from}`,
-      sub: expired ? 'expired after 2 h' : adds ? (a.via ? `from ${nameOf(a.via)}` : 'follow-up') : 'late' };
+      sub: expired ? 'expired after 2 h' : adds ? (a.via ? `from ${posName(a.via)}` : 'follow-up') : 'late' };
   }
   const t = parseTagged(text, 'helm-ask'), a = t?.attrs || {}, ask = item.ask || {}, f = ask.from || {};
   const kind = f.kind || (/^CEO\b/.test(a.from || '') ? 'ceo' : 'position');
@@ -460,16 +467,18 @@ function AnswerCard({ item, sid }) {
 const arr = (v) => (Array.isArray(v) ? v.filter((x) => x != null && x !== '') : v ? [v] : []);
 const dutyWords = (d) => `${str(d.title) || nameOf(d.id)}${d.trigger ? ` · ${triggerWords(d.trigger)}` : ''}`;
 
-// id -> name for one proposal: the open position chats of its company, then what the proposal itself says (the
-// target's current name, the create parent's name from the engine's title), else the id in words
+// id -> name for one proposal: the card's own names (the engine puts every id it mentions in p.names), then the open
+// position chats of its company, then what the proposal itself says (the target's current name, the create parent's
+// name from the engine's title), else the id in words
 export function namesFor(p) {
+  const own = p && p.names && typeof p.names === 'object' ? p.names : {};
   const cid = (p && p.company) || null, d = (p && p.draft) || {}, known = new Map();
   for (const s of sessions.value || []) { const q = s && s.position; if (q && q.id && str(q.name) && (!cid || !q.company || q.company === cid)) known.set(q.id, str(q.name)); }
   if (p && p.target && p.action !== 'create' && p.action !== 'company') known.set(p.target, str(p.diff?.name?.from) || str(d.name) || known.get(p.target) || nameOf(p.target));
   const par = p && p.action === 'create' ? (d.parent !== undefined ? d.parent : p.parent) : null;
   const t = / under (.+)$/.exec(str(p && p.title));
   if (par && t) known.set(par, t[1]);
-  return (id) => (id == null || id === '' ? 'the CEO' : known.get(id) || nameOf(id));
+  return (id) => (id == null || id === '' ? 'the CEO' : str(own[id]) || known.get(id) || nameOf(id));
 }
 
 export function proposalModel(p, names = namesFor(p)) {
@@ -477,7 +486,9 @@ export function proposalModel(p, names = namesFor(p)) {
   const name = str(d.name) || str(p.name) || (p.target || d.id ? names(p.target || d.id) : '') || 'a position';
   const parentId = d.parent !== undefined ? d.parent : p.parent;
   const parentName = str(p.parentName) || str(d.parentName) || names(parentId);
-  const title = str(p.title) || (p.action === 'create' ? `New position: ${name} under ${parentName}` : p.action === 'edit' ? `Change ${name}`
+  const dc = p.deptChange && typeof p.deptChange === 'object' ? p.deptChange : null;
+  const title = str(p.title) || (dc && dc.kind !== 'join' ? proposalTitle(p, names) : null)
+    || (p.action === 'create' ? `New position: ${name} under ${parentName}` : p.action === 'edit' ? `Change ${name}`
     : p.action === 'retire' ? `Retire ${name}` : p.action === 'company' ? `New company: ${name}` : 'Proposal');
   const changes = proposalChanges(p, names, { duties: [] });
   // retire (proposals.js check): retires = ids, deepest first, the target included; moves = [{ id, from, to }]
@@ -549,7 +560,7 @@ function EditRows({ m, k }) {
   const du = c.duties || { added: [], changed: [], removed: [] };
   const dTitle = (x) => (x.title && x.title !== x.id ? x.title : nameOf(x.id));
   const dLine = (x) => `${dTitle(x)}${x.trigger ? ` · ${x.trigger}` : ''}`;
-  const any = c.fields.length || pAdd.length || pRem.length || du.added.length || du.changed.length || du.removed.length || c.brief;
+  const any = c.dept || c.fields.length || pAdd.length || pRem.length || du.added.length || du.changed.length || du.removed.length || c.brief;
   return html`
     ${c.fields.map((f) => html`<dt key=${'f' + f.key}>${f.label}</dt><dd class="tc-change" data-field=${f.key}>
       ${f.from ? html`<s class="tc-old" title=${f.fromTitle || f.from}>${f.from}</s><span class="tc-arrow" aria-label="becomes">→</span>` : null}<span title=${f.toTitle || undefined}>${f.to}</span></dd>`)}
@@ -566,10 +577,14 @@ function ProposalBody({ m, k }) {
   const seed = d.seed || {};
   const chips = m.action === 'create' ? draftPowerChips(d.powers, d.scope, m.changes.excess.length ? m.changes.excess.map((r) => ({ power: r.power, value: r.value })) : []) : [];
   const lines = str(d.brief) ? d.brief.trimEnd().split('\n').length : 0;
+  // a department change (p.deptChange) in words: "In Legal (head: General Counsel)", "Starts the Legal department…"
+  const dept = m.changes.dept ? html`<dt>Department</dt><dd data-dept-change=${m.changes.dept.kind}>${m.changes.dept.text}</dd>` : null;
   return html`<dl class="tc-facts">
+    ${m.action !== 'create' ? dept : null}
     ${m.action === 'create' ? html`
       ${d.remit ? html`<dt>Remit</dt><dd>${d.remit}</dd>` : null}
       <dt>Reports to</dt><dd>${m.parentName}</dd>
+      ${dept}
       <dt>Scope</dt><dd title=${d.scope?.folder || undefined}>${scopeWords(d.scope)}</dd>
       ${chips.length ? html`<dt>Powers</dt><dd><span class="tc-chips">${chips.map((x) => html`<${PowerChip} c=${x} />`)}</span></dd>` : null}
       ${arr(d.duties).length ? html`<dt>Duties</dt><dd class="tc-lines">${arr(d.duties).map((x) => html`<span>${dutyWords(x)}</span>`)}</dd>` : null}
@@ -709,6 +724,6 @@ export function teamToolDescribe(item) {
   if (!v) return null;
   const i = item.input || {};
   const target = t === 'notebook_add' ? str(i.section) : t === 'request_access' ? str(i.target)
-    : t === 'team_propose' ? [i.action, str(i.name) || nameOf(i.id)].filter(Boolean).join(' ') : t === 'team_roster' ? nameOf(i.under) : str(i.ticket);
+    : t === 'team_propose' ? [i.action, str(i.name) || posName(i.id)].filter(Boolean).join(' ') : t === 'team_roster' ? posName(i.under) : str(i.ticket);
   return { icon: v[0], verb: item.status === 'running' ? v[2] : v[1], target };
 }

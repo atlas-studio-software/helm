@@ -3,6 +3,8 @@
 // chips for what needs you (requests, proposals), open notebook items and the next duty.
 // Indent: 16 px a level on desktop, 12 px on the phone, where it stops at level 3 and the row names its
 // manager instead ("… › Tax ›"). Keyboard: the WAI-ARIA tree pattern (roving tabindex; arrows, Home/End, Enter).
+// Departments: when the company has one, the CEO's top level is grouped under a header per department (then "No
+// department"); the header is not a tree item, so the keyboard model is unchanged.
 import { useEffect, useRef } from 'preact/hooks';
 import { html } from '../lib/html.js';
 import { Icon } from '../lib/icons.js';
@@ -75,6 +77,22 @@ function Row({ row, node, sel, tab, onSelect, enter }) {
   </div>`;
 }
 
+// A department's header (spec 2.4): its name, its head and how many positions it holds (the head included). It is
+// not a tree item: arrows skip it, and the group around the department carries the same words for a screen reader.
+const deptLabel = (g) => (g.none ? `No department, ${g.count} position${g.count === 1 ? '' : 's'}`
+  : `${g.name} department, headed by ${g.headName}, ${g.count} position${g.count === 1 ? '' : 's'}`);
+function DeptHead({ g, indent }) {
+  const name = g.none ? 'No department' : g.name;
+  return html`<div class=${cx('pos-row pos-dept', g.none && 'none')} style=${{ '--indent': `${indent}px` }} aria-hidden="true">
+    <span class="pos-dept-l1">
+      <${Icon} name=${g.none ? 'circle' : 'users'} size=${12} />
+      <span class="pos-dept-name truncate" title=${name}>${name}</span>
+      ${!g.none && g.headName && html`<span class="pos-dept-head truncate" title=${`Headed by ${g.headName}`}>headed by ${g.headName}</span>`}
+      <span class="pos-dept-n tnum" title=${`${g.count} position${g.count === 1 ? '' : 's'}${g.none ? '' : ', the head included'}`}>${g.count}<span class="pos-dept-n-word"> position${g.count === 1 ? '' : 's'}</span></span>
+    </span>
+  </div>`;
+}
+
 export function Tree({ cid, data, phone, onSelect = select, onTalk }) {
   const tree = data?.tree || [];
   const rows = visibleRows(tree, opens.value[cid], { phone });
@@ -102,12 +120,23 @@ export function Tree({ cid, data, phone, onSelect = select, onTalk }) {
   // a row clicked or selected elsewhere takes the tab stop
   useEffect(() => { if (sel) focusOf.set(cid, sel); }, [cid, sel]);
   const parentsOpened = new Set([...justOpened]);
+  const one = (r) => (r.ceo
+    ? html`<${CeoRow} key=${CEO} row=${r} company=${data?.company} sel=${sel === CEO} tab=${tabId === CEO} onSelect=${onSelect} positions=${tree.length} />`
+    : html`<${Row} key=${r.id} row=${r} node=${byId.get(r.id)} sel=${sel === r.id} tab=${tabId === r.id} onSelect=${onSelect} enter=${parentsOpened.has(r.parentId)} />`);
+  // with departments, each one (its header, its head and everyone under it) is a labelled group; none: rows as before
+  const parts = [];
+  let seg = null;
+  for (const r of rows) {
+    if (r.group) { seg = { g: r.group, indent: r.indent, rows: [] }; parts.push(seg); }
+    if (seg) seg.rows.push(r); else parts.push(r);
+  }
   return html`<div ref=${root} class=${cx('pos-tree', phone && 'is-phone')} role="tree" aria-label=${`${data?.company?.name || 'Company'} org tree`}
       style=${{ '--step': `${phone ? INDENT.phone : INDENT.desktop}px` }} onKeyDown=${onKey}
       onFocusIn=${(e) => { const it = e.target.closest?.('[role="treeitem"]'); if (it) focusOf.set(cid, it.dataset.id); }}>
-    ${rows.map((r) => (r.ceo
-      ? html`<${CeoRow} key=${CEO} row=${r} company=${data?.company} sel=${sel === CEO} tab=${tabId === CEO} onSelect=${onSelect} positions=${tree.length} />`
-      : html`<${Row} key=${r.id} row=${r} node=${byId.get(r.id)} sel=${sel === r.id} tab=${tabId === r.id} onSelect=${onSelect} enter=${parentsOpened.has(r.parentId)} />`))}
+    ${parts.map((x) => (x.g
+      ? html`<div key=${x.g.key} role="group" class="pos-dept-group" aria-label=${deptLabel(x.g)} data-dept=${x.g.none ? '' : x.g.name}>
+          <${DeptHead} g=${x.g} indent=${x.indent} />${x.rows.map(one)}</div>`
+      : one(x)))}
     ${!tree.length && html`<div class="pos-tree-empty" role="none">
       <p><strong>No positions yet.</strong> Open a CEO chat and say what you want covered, for example legal or money. The CEO proposes a position, and you approve it here or in that chat.</p>
       ${onTalk && html`<button type="button" class="btn btn-sm" onClick=${onTalk}><${Icon} name="chat" size=${14} />Talk to the CEO</button>`}

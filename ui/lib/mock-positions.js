@@ -5,9 +5,13 @@
 // newest first). test/host/positions-engine-shapes.test.js compares these payloads key by key with the real engine's,
 // so an engine rename fails a test instead of hiding behind this mock. The power rules (tree.js effective / excess)
 // and proposals.js editDiff are small ports below, so every position's powers and every card's diff are computed.
-// "Example Co" has a 3-level tree with one position working, one waiting on an access request, two open proposals (a
-// new report listing powers beyond its manager's, an edit with a brief diff), a duty due within the day, a live ask
-// chain and logged cross-talk; "Harbor Books" exists so the company switcher shows.
+// "Example Co" has a 3-level tree with one position working, one waiting on an access request, three open proposals (a
+// new report listing powers beyond its manager's, an edit with a brief diff, a new top-level position heading a NEW
+// department), a duty due within the day, a live ask chain and logged cross-talk. It has three departments (docs/
+// POSITIONS.md 2.4): Legal (headed by General Counsel: Tax Specialist, Payroll Tax Specialist, Contracts Manager),
+// Marketing (Marketing Manager: Social Media Coordinator) and Finance (Controller); QA Engineer is in none. Every card
+// carries `names` (each position id it mentions -> its name). "Harbor Books" has NO departments (the backward-compat
+// scene) and exists so the company switcher shows.
 // No real people, folders or projects: paths are C:/Users/you/... placeholders (Helm ships open source).
 //
 // Wiring: ui/lib/transport.js (lane T10) adds one line to mockRpc's switch, before `default`:
@@ -178,10 +182,47 @@ function editDiff(cur, next, { briefBefore, briefAfter, excess }) {
   if ((cur.parent ?? null) !== (next.parent ?? null)) d.parent = { from: cur.parent ?? null, to: next.parent ?? null };
   for (const k of ['name', 'remit', 'model', 'effort', 'status']) if (JSON.stringify(cur[k]) !== JSON.stringify(next[k])) d[k] = { from: cur[k] ?? null, to: next[k] ?? null };
   if (JSON.stringify(cur.scope) !== JSON.stringify(next.scope)) d.scope = { from: cur.scope, to: next.scope };
+  if ((cur.department ?? null) !== (next.department ?? null)) d.department = { from: cur.department ?? null, to: next.department ?? null };
   if (excess && excess.length) d.excess = excess;
   return d;
 }
-const POSITION_FIELDS = ['id', 'name', 'parent', 'remit', 'scope', 'status', 'model', 'effort', 'powers', 'duties'];
+const POSITION_FIELDS = ['id', 'name', 'parent', 'remit', 'scope', 'status', 'model', 'effort', 'powers', 'duties', 'department'];
+
+// tree.js departmentOf: a department is a name on a top-level position (parent null), its HEAD; every position below
+// the head is in it. -> { name, head } | null (none, or a broken line: an ancestor that is not a live position)
+function departmentOf(all, id) {
+  let p = all[id];
+  for (let n = 0; p && p.parent != null && n < 50; n++) { const up = all[p.parent]; if (!up) return null; p = up; }
+  return p && p.parent == null && p.department ? { name: p.department, head: p.id } : null;
+}
+// the ids above a position, nearest first (tree.js ancestors)
+function ancestorsOf(all, id) {
+  const out = [];
+  for (let a = all[id] && all[id].parent; a != null && all[a] && out.length < 50; a = all[a].parent) out.push(a);
+  return out;
+}
+// a card's `names`: { [positionId]: displayName } for every position id the card mentions (target, parent and the
+// parent's managers, the proposer, excess `by`, a reparent's from / to, a department's head). Names come from the live
+// positions, or from a draft (this card's, or another open card's that creates that id); an id with no known name is left out.
+function cardNames(c, all, cards = []) {
+  const ids = new Set();
+  const add = (id) => { if (typeof id === 'string' && id && id !== CEO_BY) ids.add(id); };
+  if (c.action !== 'company') add(c.target);
+  add(c.parent);
+  if (c.parent != null) ancestorsOf(all, c.parent).forEach(add);
+  if (c.by && c.by.kind === 'position') add(c.by.id);
+  for (const x of [...(c.excess || []), ...((c.diff && c.diff.excess) || [])]) add(x.by);
+  if (c.diff && c.diff.parent) { add(c.diff.parent.from); add(c.diff.parent.to); }
+  if (c.deptChange) add(c.deptChange.head);
+  const out = {};
+  for (const id of ids) {
+    const live = all && all[id];
+    const card = id === c.target && c.draft && c.action !== 'company' ? c : cards.find((y) => y.action === 'create' && y.target === id && y.company === c.company && y.draft);
+    const name = live ? live.name : card ? card.draft.name : null;
+    if (name) out[id] = name;
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------- the fictional data
 // next local hh:mm (on weekday `dow` when given), strictly after now
@@ -210,7 +251,7 @@ const plainBrief = (p) => brief(p.name, p.remit, ['Send, post, pay or publish an
 export function buildMockTeam(now = Date.now()) {
   const P = (o) => ({ status: 'active', model: null, effort: 'high', scope: { kind: 'company' }, powers: NONCODING, duties: [], createdAt: iso(now - 20 * DAY), version: 1, ...o });
   const positions = {
-    legal: P({ id: 'legal', name: 'General Counsel', parent: null, remit: 'Privacy pages, terms and contracts for every Example Co product.', version: 3,
+    legal: P({ id: 'legal', name: 'General Counsel', parent: null, department: 'Legal', remit: 'Privacy pages, terms and contracts for every Example Co product.', version: 3,
       duties: [
         { id: 'privacy-recheck', title: 'Privacy text re-check', enabled: true, trigger: { kind: 'event', event: 'commit', repo: `${HOME}/example-site`, paths: ['**/privacy*', '**/cookies*', '**/terms*'] }, output: 'report', prompt: 'Re-check the privacy, cookies and terms text against what the code now does.' },
         { id: 'terms-weekly', title: 'Weekly terms review', enabled: true, trigger: { kind: 'schedule', cron: '0 10 * * 1', catchUp: 'once' }, output: 'report', prompt: 'List anything in the terms that the last week of changes made untrue.' },
@@ -222,14 +263,14 @@ export function buildMockTeam(now = Date.now()) {
       duties: [{ id: 'quarterly-check', title: 'Quarterly deadlines check', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 1,4,7,10 *', catchUp: 'once' }, output: 'report', prompt: 'List tax deadlines due in the next 90 days and what each one needs.' }] }),
     payroll: P({ id: 'payroll', name: 'Payroll Tax Specialist', parent: 'tax', remit: 'Withholding rules for contractors and staff, per country.', createdAt: iso(now - 2 * DAY + 4 * MIN) }),
     contracts: P({ id: 'contracts', name: 'Contracts Manager', parent: 'legal', remit: 'Reviews supplier and customer contracts and drafts redlines. Never signs.' }),
-    marketing: P({ id: 'marketing', name: 'Marketing Manager', parent: null, remit: 'Release posts, landing page copy and the monthly newsletter. Drafts only, never posts.',
+    marketing: P({ id: 'marketing', name: 'Marketing Manager', parent: null, department: 'Marketing', remit: 'Release posts, landing page copy and the monthly newsletter. Drafts only, never posts.',
       duties: [
         { id: 'release-post', title: 'Release post draft', enabled: true, trigger: { kind: 'event', event: 'release', repo: `${HOME}/example-app`, tag: 'v*' }, output: 'draft', prompt: 'Draft the release post from the commits since the last tag.' },
         { id: 'newsletter', title: 'Newsletter draft', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 * *', catchUp: 'once' }, output: 'draft', prompt: 'Draft this month\'s newsletter.' },
       ] }),
     social: P({ id: 'social', name: 'Social Media Coordinator', parent: 'marketing', status: 'paused', remit: 'Short posts for each release, in the house voice.',
       duties: [{ id: 'release-thread', title: 'Release thread', enabled: false, trigger: { kind: 'event', event: 'release', repo: `${HOME}/example-app`, tag: 'v*' }, output: 'draft' }] }),
-    finance: P({ id: 'finance', name: 'Controller', parent: null, remit: 'Money check: subscriptions, payouts, refunds and runway.', model: 'claude-sonnet-5-5',
+    finance: P({ id: 'finance', name: 'Controller', parent: null, department: 'Finance', remit: 'Money check: subscriptions, payouts, refunds and runway.', model: 'claude-sonnet-5-5',
       duties: [
         { id: 'daily-cash', title: 'Daily cash check', enabled: true, trigger: { kind: 'schedule', cron: '0 9 * * *', catchUp: 'skip' }, output: 'report' },
         { id: 'monthly-money', title: 'Monthly money check', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 * *', catchUp: 'once' }, output: 'report' },
@@ -310,11 +351,29 @@ export function buildMockTeam(now = Date.now()) {
       access: { kind: 'read', target: `${HOME}/example-analytics-export`, why: 'The analytics export, to see what the site really collects before answering the privacy question.',
         position: { id: 'legal', name: 'General Counsel', path: ['General Counsel'] }, outward: false, onceOnly: true, waitMin: 30 } },
   ];
+  // access.names: { [ancestorId]: name } beside access.ancestors, only when an "Approve always" would widen some managers
+  // (access.js); General Counsel's request is top-level and beyond the company folders (once only), so it has neither
+  for (const r of access) if (r.access.ancestors && r.access.ancestors.length) r.access.names = Object.fromEntries(r.access.ancestors.map((a) => [a, positions[a].name]));
 
   // ---- proposal cards (proposals.js: newest first by `at`; decided ones stay 7 days)
   const folders = companies[0].folders;
   const ceoBy = { kind: 'ceo', sessionId: 's_ceo_1' };
   const proposals = [];
+  // a create under a department head's line joins that department (deptChange kind 'join'; the title stays "New position")
+  const joinOf = (parent) => { const d = departmentOf(positions, parent); return d ? { deptChange: { kind: 'join', name: d.name, head: d.head, headName: positions[d.head].name } } : {}; };
+  {
+    // an open create of a new top-level position that heads a NEW department (draft.department); older than p_4c2e, so
+    // the newest open create stays the one with excess
+    const draft = { id: 'bizdev', name: 'Head of Business Development', parent: null, department: 'Business Development',
+      remit: 'Partnerships, resellers and integration deals for Example Co. Drafts outreach; never signs or sends.',
+      powers: NONCODING, duties: [], scope: { kind: 'company' }, model: null, effort: 'high',
+      brief: '# Head of Business Development\n\n## What this role covers\nFinds and qualifies partners and resellers, and drafts the outreach.\n\n## Never\n- Sign, send or agree to anything.\n' };
+    const excess = computeExcess(positions, folders, 'example-co', draft.powers, null, { scope: draft.scope, workspaceId: draft.id });
+    proposals.push({ id: 'p_6e3b', company: 'example-co', action: 'create', title: 'New department: Business Development, headed by Head of Business Development',
+      why: 'Partner and reseller requests keep landing with Marketing Manager; they need their own owner and group.', draft, excess, status: 'open',
+      deptChange: { kind: 'new', name: 'Business Development', head: 'bizdev', headName: 'Head of Business Development' },
+      by: ceoBy, target: 'bizdev', parent: null, at: iso(now - 30 * MIN) });
+  }
   {
     // an open create: Tax Specialist proposes a report listing powers beyond its own (excess)
     const draft = { id: 'state-filings', name: 'State Tax Analyst', parent: 'tax', remit: 'Tracks state sales-tax filings and their due dates.',
@@ -324,7 +383,7 @@ export function buildMockTeam(now = Date.now()) {
       brief: '# State Tax Analyst\n\n## What this role covers\nKeeps the list of state sales-tax filings, their due dates and what each needs.\n\n## Never\n- File, pay or send anything.\n' };
     const excess = computeExcess(positions, folders, 'example-co', draft.powers, 'tax', { scope: draft.scope, workspaceId: draft.id });
     proposals.push({ id: 'p_4c2e', company: 'example-co', action: 'create', title: 'New position: State Tax Analyst under Tax Specialist',
-      why: 'Filing deadlines differ per state and the question keeps coming up.', draft, excess, status: 'open',
+      why: 'Filing deadlines differ per state and the question keeps coming up.', draft, excess, status: 'open', ...joinOf('tax'),
       by: { kind: 'position', id: 'tax', sessionId: 's_tax_1' }, target: 'state-filings', parent: 'tax', at: iso(now - 25 * MIN) });
   }
   {
@@ -348,7 +407,7 @@ export function buildMockTeam(now = Date.now()) {
     const p = positions.payroll;
     proposals.push({ id: 'p_19aa', company: 'example-co', action: 'create', title: 'New position: Payroll Tax Specialist under Tax Specialist', why: 'Payroll questions need their own owner.',
       draft: { id: 'payroll', name: p.name, parent: 'tax', remit: p.remit, powers: NONCODING, duties: [], scope: { kind: 'company' }, model: null, effort: 'high', brief: plainBrief(p) },
-      excess: [], status: 'approved', by: { kind: 'position', id: 'tax', sessionId: 's_tax_1' }, target: 'payroll', parent: 'tax', at: iso(now - 2 * DAY),
+      excess: [], status: 'approved', ...joinOf('tax'), by: { kind: 'position', id: 'tax', sessionId: 's_tax_1' }, target: 'payroll', parent: 'tax', at: iso(now - 2 * DAY),
       decidedAt: dAt, decision: { at: dAt, how: 'click', result: 'approved' }, decidedHow: 'click', result: 'Payroll Tax Specialist created under Tax Specialist' });
   }
   {
@@ -360,6 +419,7 @@ export function buildMockTeam(now = Date.now()) {
       draft: next, diff: editDiff(cur, next, {}), status: 'declined', by: ceoBy, target: 'marketing', parent: null, at: iso(now - 4 * DAY),
       decidedAt: dAt, decision: { at: dAt, how: 'click', result: 'declined', note: 'Keep it drafts only.' }, decidedHow: 'click', note: 'Keep it drafts only.' });
   }
+  for (const c of proposals) c.names = cardNames(c, positions, proposals);
   const inbox = [
     { at: iso(now - 3 * HOUR), id: 'n_31', position: 'finance', kind: 'duty-report', title: 'Weekly spend report', text: 'Spend is flat week over week. Two subscriptions renew next week: the design tool and the error tracker. The design tool has one unused seat.', files: ['work/drafts/weekly-spend.md'], needsOwen: true },
     { at: iso(now - 1 * DAY), id: 'n_30', position: 'legal', kind: 'flag', title: 'Brief edited by you', text: 'General Counsel\'s brief changed: "How it reports" now asks for the file and line first.', needsOwen: false },
@@ -392,7 +452,7 @@ function importedCards(now) {
     return { id: o.pid, company: cid, action: 'create', title: `New position: ${o.name}${o.parentName ? ` under ${o.parentName}` : ''}`, why: o.why, draft,
       status: 'open', by, target: o.id, parent: o.parent, at: iso(now - 10 * MIN + i * 2000), ref };
   };
-  return [
+  const cards = [
     { id: 'p_c0a1', company: null, action: 'company', title: 'New company: Example Studio', why: 'A second business, with its own site and orders.',
       draft: { id: cid, name: 'Example Studio', folders: [`${HOME}/example-studio-site`] }, status: 'open', by, target: cid, at: iso(now - 10 * MIN), ref: 'company' },
     job(1, 'ops', { pid: 'p_c0a2', id: 'operations', name: 'Operations Manager', parent: null, remit: 'Orders, suppliers and the weekly numbers.', why: 'Someone has to own the weekly numbers.' }),
@@ -402,6 +462,9 @@ function importedCards(now) {
       powers: { ...NC, read: [...NC.read, `${HOME}/old-studio-site`], bash: 'readonly' } }),
     job(4, 'support', { pid: 'p_c0a5', id: 'customer-care', name: 'Customer Support Specialist', parent: 'operations', parentName: 'Operations Manager', remit: 'Answers customer emails, from drafts you approve.', why: 'Customer emails need a first draft.' }),
   ];
+  // no live positions yet: every name comes from a card's draft (the company card mentions no position: names {})
+  for (const c of cards) c.names = cardNames(c, {}, cards);
+  return cards;
 }
 
 const err = (message, code) => Object.assign(new Error(message), { code });
@@ -462,7 +525,9 @@ export function createMockTeam({ mode = null, now = Date.now(), emit = () => {},
     const walk = (p, depth) => {
       const lv = cid === 'example-co' ? D.live[p.id] || {} : {};
       const reports = Object.values(all).filter((x) => x.parent === p.id).map((x) => x.id);
+      const dept = departmentOf(all, p.id);   // head and staff alike; no keys outside any department
       out.push({ id: p.id, name: p.name, parent: p.parent ?? null, remit: p.remit || '', status: p.status === 'paused' ? 'paused' : 'active', depth, reports,
+        ...(dept ? { department: dept.name, departmentHead: dept.head } : {}),
         ...(lv.status === 'working' && p.status !== 'paused' ? { busy: lv.lastActivity?.text || 'working' } : {}),
         openItems: D.openItems(cid, p.id), nextDuty: nextDuty(cid, p), lastActivity: lv.lastActivity || null,
         pending: { requests: accessOf(cid).filter((r) => r.position === p.id).length, proposals: props.filter((q) => q.target === p.id || q.parent === p.id).length } });

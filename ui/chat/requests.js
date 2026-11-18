@@ -133,13 +133,14 @@ const BASH_WORD = { on: 'Bash on: any command inside its write area', readonly: 
 const WARN = 'This is inside ~/.claude (Claude settings and history).';
 const ONCE_FOR = { duty: 'for this duty run', ticket: 'until this question is answered', turn: 'until this turn ends' };
 
-// ancestor ids -> names: the open position chats of the company first, then the request's own name path (all of the
-// position's managers, top-down: when every one is widened the two line up; else a name whose slug is the id)
-function ancestorNames(ids, path, company) {
+// ancestor ids -> names: the request's own names map first (access.names, the engine: { ancestorId: name }), then the
+// open position chats of the company, then the request's name path (all of the position's managers, top-down: when
+// every one is widened the two line up; else a name whose slug is the id), else the id in words
+function ancestorNames(ids, path, company, own = {}) {
   const known = new Map();
   for (const s of sessions.value || []) { const q = s && s.position; if (q && q.id && str(q.name) && (!company || !q.company || q.company === company)) known.set(q.id, str(q.name)); }
   const managers = path.slice(0, -1).reverse();   // nearest first, like ids
-  return ids.map((id, i) => ({ id, name: known.get(id) || (managers.length === ids.length ? managers[i] : '') || managers.find((n) => slug(n) === id) || nameOf(id) }));
+  return ids.map((id, i) => ({ id, name: str(own[id]) || known.get(id) || (managers.length === ids.length ? managers[i] : '') || managers.find((n) => slug(n) === id) || nameOf(id) }));
 }
 
 export function accessModel(item, session) {
@@ -150,12 +151,13 @@ export function accessModel(item, session) {
   const target = str(a.target) || str(item.input?.command) || '';
   const company = str(ap.company) || pos?.company || '';
   // path: names from the top-level manager down to the position itself (access.js namePath); older shape: managers only
-  let path = Array.isArray(ap.path) ? ap.path.map((x) => (typeof x === 'string' ? x : str(x?.name) || nameOf(x?.id))).filter(Boolean) : [];
-  if (!path.length && pos?.parent) path = [str(pos.parentName) || nameOf(pos.parent)];
+  const own = a.names && typeof a.names === 'object' ? a.names : {};   // the engine: { ancestorId: name }
+  let path = Array.isArray(ap.path) ? ap.path.map((x) => (typeof x === 'string' ? x : str(x?.name) || str(own[x?.id]) || nameOf(x?.id))).filter(Boolean) : [];
+  if (!path.length && pos?.parent) path = [str(pos.parentName) || str(own[pos.parent]) || nameOf(pos.parent)];
   if (path[path.length - 1] !== name) path = [...path, name];
   const ancestors = (Array.isArray(a.ancestors) ? a.ancestors : []).filter(Boolean);
-  const anc = ancestors.every((x) => typeof x === 'string') ? ancestorNames(ancestors, path, company)
-    : ancestors.map((x) => (typeof x === 'string' ? { id: x, name: nameOf(x) } : { id: x.id, name: str(x.name) || nameOf(x.id) }));
+  const anc = ancestors.every((x) => typeof x === 'string') ? ancestorNames(ancestors, path, company, own)
+    : ancestors.map((x) => (typeof x === 'string' ? { id: x, name: str(own[x]) || nameOf(x) } : { id: x.id, name: str(x.name) || str(own[x.id]) || nameOf(x.id) }));
   const companyName = str(ap.companyName) || str(pos?.companyName);
   const line = [companyName, 'CEO', ...path.filter((x) => x && x !== 'CEO')].filter(Boolean);
   const kind = outward ? 'outward' : ASKS[a.kind] ? a.kind : 'read';

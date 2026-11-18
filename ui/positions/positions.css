@@ -82,6 +82,20 @@
 .pos-row:first-child { padding-top: 0; }
 .pos-row.enter { --m-rise: -4px; animation: m-in-rise var(--m-dur-s) var(--m-spring) both, m-in-fade calc(var(--m-dur-s) * 0.4) var(--m-fade-in) both; }
 
+/* departments (tree.js): a labelled group per department; its header sits on the guides like a row, is not a tree item,
+   and truncates (name, then "headed by …"; the count never) so it fits at 320 px */
+.pos-dept-group { display: flex; flex-direction: column; min-width: 0; }
+.pos-row.pos-dept { padding-top: 16px; }
+.pos-dept-l1 { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 20px; padding: 0 2px 2px 8px; color: var(--text-3); }
+.pos-dept-l1 > .icon { flex: none; }
+.pos-dept-name { flex: 0 1 auto; min-width: 3em; font: 600 var(--fs-xs)/1.4 var(--font); color: var(--text-2); }
+.pos-dept.none .pos-dept-name { font-weight: 500; color: var(--text-3); }
+.pos-dept-head { flex: 0 1000 auto; min-width: 0; font-size: var(--fs-2xs); line-height: 1.4; }
+.pos-dept-n { flex: none; margin-left: auto; padding-left: 8px; font-size: var(--fs-2xs); line-height: 1.4; white-space: nowrap; }
+.pos-tree.is-phone .pos-dept-n-word { display: none; }   /* the phone shows the number only */
+/* the detail header's department chip: shrinks and truncates before the name does */
+.chip.pos-chip.pos-dept-chip { flex: 0 1000 auto; min-width: 4.5em; max-width: 16em; overflow: hidden; font-family: var(--font); font-weight: 500; color: var(--text-2); }
+
 .pos-card {
   position: relative; min-width: 0;
   display: flex; flex-direction: column;

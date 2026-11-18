@@ -11,7 +11,7 @@ import { cx, useMenu, Menu } from '../shell/util.js';
 import {
   liveStatus, statusText, dotClass, rowActivity, fmtNextDuty, powerRows, GRANT_TEXT, grantTone, triggerWords, RUN_TEXT, runTone,
   untilLabel, agoShort, dayLabel, chatRows, crosstalkLine, proposalTitle, proposalStatus, decidedText, partyName, baseName, CEO,
-  proposalChanges, draftPowerChips, excessOf, excessHeadline, scopeWords, pathKey,
+  proposalChanges, draftPowerChips, excessOf, excessHeadline, scopeWords, pathKey, cardNames, deptOf, deptList,
 } from '../lib/positions-model.js';
 import {
   positions, crosstalk, detailTab, busy, pkey, loadPosition, loadCompany, loadCrosstalk, select, openChat, openCeo, openOld, companies,
@@ -68,6 +68,7 @@ function ProposalFacts({ p, names, duties }) {
         ${ch.duties.added.map((x) => html`<span key=${`a${x.id}`} class="pos-add">+ ${x.title}${x.trigger ? html`<span class="pos-dim"> · ${x.trigger}</span>` : ''}</span>`)}
         ${ch.duties.changed.map((x) => html`<span key=${`c${x.id}`}>~ ${x.title} changed${x.trigger ? html`<span class="pos-dim"> · ${x.trigger}</span>` : ''}</span>`)}
         ${ch.duties.removed.map((x) => html`<span key=${`r${x.id}`} class="pos-del">− ${x.title}</span>`)}</dd></div>`}
+      ${ch.dept && html`<div><dt>Department</dt><dd data-dept-change=${ch.dept.kind}>${ch.dept.text}</dd></div>`}
       ${p.action === 'create' && d.remit && html`<div><dt>Remit</dt><dd>${d.remit}</dd></div>`}
       ${p.action === 'create' && html`<div><dt>Scope</dt><dd title=${d.scope?.folder || ''}>${scopeWords(d.scope)}</dd></div>`}
       ${p.action === 'create' && chips.length > 0 && html`<div><dt>Powers</dt><dd class="pos-chips">${chips.map((c) => html`<${Chip} key=${`${c.power}:${c.value}`} c=${c} />`)}</dd></div>`}
@@ -87,7 +88,8 @@ function ProposalFacts({ p, names, duties }) {
   </div>`;
 }
 
-export function ProposalCard({ cid, p, names, duties, waitsFor = null, folder = null }) {
+export function ProposalCard({ cid, p, names: viewNames, duties, waitsFor = null, folder = null }) {
+  const names = cardNames(p, viewNames || {});   // the card's own names (every id it mentions) first
   const st = proposalStatus(p);
   const [declining, setDeclining] = useState(false);
   const [note, setNote] = useState('');
@@ -197,6 +199,7 @@ function Overview({ cid, id, node, d, names }) {
   const missingReqs = Math.max(0, (node?.pending?.requests || 0) - reqs.length);
   const open = Math.max(0, +node?.openItems || 0);
   const created = p.createdAt ? dayLabel(ts(p.createdAt)) : null;
+  const dept = deptOf(node, p, names);
   return html`<div class="pos-sec">
     <p class="pos-remit-big">${p.remit || 'No remit yet.'}</p>
     ${node?.problem && html`<${Notice} tone="danger" icon="alert">position.json did not validate, so the last good version is in force: ${node.problem}<//>`}
@@ -209,6 +212,8 @@ function Overview({ cid, id, node, d, names }) {
     <dl class="pos-kv">
       <div><dt>Status</dt><dd><span class=${cx('dot', dotClass(st))} aria-hidden="true"></span>${statusText(st)}${act.text ? html`<span class="pos-dim"> · ${act.text}${act.ago ? ` ${act.ago}` : ''}</span>` : ''}</dd></div>
       <div><dt>Manager</dt><dd>${p.parent ? html`<${Link} onClick=${() => select(p.parent)}>${names[p.parent] || p.parent}<//>` : html`<${Link} onClick=${() => select(CEO)}>CEO<//>`}</dd></div>
+      ${dept && html`<div><dt>Department</dt><dd data-dept=${dept.name}>${dept.isHead ? html`Heads ${dept.name}`
+        : html`${dept.name}<span class="pos-dim"> (head: ${dept.head ? html`<${Link} onClick=${() => select(dept.head)}>${dept.headName}<//>` : dept.headName})</span>`}</dd></div>`}
       <div><dt>Reports</dt><dd class="pos-links">${reports.length ? reports.map((r, i) => html`${i ? html`<span class="pos-dim">, </span>` : ''}<${Link} key=${r} onClick=${() => select(r)}>${names[r] || r}<//>`) : html`<span class="pos-dim">None</span>`}</dd></div>
       <div><dt>Scope</dt><dd>${p.scope?.kind === 'product' ? html`<span class="mono" title=${p.scope.folder}>${baseName(p.scope.folder)}</span>` : 'Company-wide'}</dd></div>
       <div><dt>Model</dt><dd>${p.model || 'Helm default'}<span class="pos-dim"> · effort ${p.effort || 'high'}</span></dd></div>
@@ -306,6 +311,7 @@ function Crosstalk({ cid, id, names }) {
 export function CeoDetail({ cid, data, narrow, onBack, names }) {
   const co = data?.company || {};
   const tops = (data?.tree || []).filter((r) => !r.parent);
+  const depts = deptList(data?.tree || []);
   return html`<div class="pos-detail">
     <header class="pos-dhead">
       ${narrow && html`<button type="button" class="icon-btn pos-back" aria-label="Back to the team" onClick=${onBack}><${Icon} name="chevron-left" size=${18} /></button>`}
@@ -323,6 +329,10 @@ export function CeoDetail({ cid, data, narrow, onBack, names }) {
           <span class="pos-li-l1"><span class=${cx('dot', dotClass(st))} aria-hidden="true"></span><${Link} onClick=${() => select(r.id)}>${r.name}<//><span class="pos-dim">${statusText(st)}</span></span>
           <span class="pos-li-sub truncate">${r.remit}</span></li>`; })}</ul>`
         : html`<p class="pos-empty">None yet. In a CEO chat, say what you want covered; the CEO proposes a position for you to approve.</p>`}
+      ${depts.length > 0 && html`<h3 class="pos-h3">Departments</h3>
+        <ul class="pos-list" data-depts=${depts.length}>${depts.map((g) => html`<li key=${g.name} class="pos-li">
+          <span class="pos-li-l1"><${Icon} name="users" size=${14} /><span class="pos-li-title">${g.name}</span><span class="pos-dim tnum">${g.count} position${g.count === 1 ? '' : 's'}</span></span>
+          <span class="pos-li-sub truncate">Headed by <${Link} onClick=${() => select(g.headId)}>${g.headName}<//></span></li>`)}</ul>`}
     </div></div>
   </div>`;
 }
@@ -349,6 +359,7 @@ export function Detail({ cid, id, node, names, narrow, onBack }) {
   const st = liveStatus(node || p);
   const name = node?.name || p?.name || id;
   const paused = p?.status === 'paused' || st === 'paused';
+  const dept = deptOf(node, p, names);
   useEffect(() => { if (!s) loadPosition(cid, id); }, [k]);
   // narrow layouts swap the tree for this screen: focus its heading so a screen reader (and the next Tab) starts here
   const headRef = useRef(null);
@@ -356,7 +367,7 @@ export function Detail({ cid, id, node, names, narrow, onBack }) {
   const head = html`<header class="pos-dhead">
     ${narrow && html`<button type="button" class="icon-btn pos-back" aria-label="Back to the team" onClick=${onBack}><${Icon} name="chevron-left" size=${18} /></button>`}
     <div class="pos-dtitle">
-      <h2 class="pos-dname" ref=${headRef} tabindex="-1"><span class=${cx('dot', dotClass(st), st === 'working' && 'live')} aria-hidden="true"></span><span class="truncate">${name}</span>${paused && html`<span class="chip pos-chip pos-paused">Paused</span>`}</h2>
+      <h2 class="pos-dname" ref=${headRef} tabindex="-1"><span class=${cx('dot', dotClass(st), st === 'working' && 'live')} aria-hidden="true"></span><span class="truncate">${name}</span>${paused && html`<span class="chip pos-chip pos-paused">Paused</span>`}${dept && html`<span class="chip pos-chip pos-dept-chip" title=${dept.isHead ? `Heads the ${dept.name} department` : `In the ${dept.name} department, headed by ${dept.headName}`}><${Icon} name="users" size=${11} /><span class="truncate">${dept.isHead ? `${dept.name} · head` : dept.name}</span></span>`}</h2>
       <p class="pos-dsub">${statusText(st)}${node?.parent !== undefined || p ? html`<span class="pos-dim"> · reports to ${(node?.parent ?? p?.parent) ? names[node?.parent ?? p?.parent] || (node?.parent ?? p?.parent) : 'the CEO'}</span>` : ''}</p>
     </div>
     ${p && html`<div class="pos-dactions">

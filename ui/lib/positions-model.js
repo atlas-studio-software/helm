@@ -161,23 +161,73 @@ export function ancestorsOf(ix, id) {
   return out;
 }
 
-// The rows on screen, CEO root first. Each: { id, depth, level, hasKids, open, indent, crumb, parentId, posinset, setsize }
+// Departments (spec 2.4): a named group (Legal, Finance...) headed by a top-level position, whose own position.json
+// carries `department`; everyone under the head is in it. team.get rows carry `department` and `departmentHead`
+// (head and staff alike); a row without them is outside any department.
+// The CEO's top level grouped by department, in the CEO's report order, then the rest under "No department".
+// null when the company has no department (the tree renders as it always did).
+// -> [{ key, name, headId, headName, count (people, the head included), roots: [ids], none? }]
+export function deptGroups(tree, ix = indexTree(tree)) {
+  const groups = new Map(), none = [];
+  for (const id of ix.roots) {
+    const r = ix.byId.get(id);
+    const name = typeof r.department === 'string' ? r.department.trim() : '';
+    if (!name) { none.push(id); continue; }
+    if (!groups.has(name)) groups.set(name, { key: `dept:${name}`, name, headId: null, headName: '', roots: [] });
+    const g = groups.get(name);
+    g.roots.push(id);
+    // the head: the root the engine marks as heading it (departmentHead = itself), else the first one
+    if (!g.headId || (r.departmentHead === id && ix.byId.get(g.headId)?.departmentHead !== g.headId)) { g.headId = id; g.headName = r.name || id; }
+  }
+  if (!groups.size) return null;
+  const size = (id) => 1 + (ix.kids.get(id) || []).reduce((n, k) => n + size(k), 0);
+  const out = [...groups.values()];
+  if (none.length) out.push({ key: 'dept:', name: null, headId: null, headName: '', roots: none, none: true });
+  for (const g of out) g.count = g.roots.reduce((n, id) => n + size(id), 0);
+  return out;
+}
+// A position's department in words: { name, head, headName, isHead } or null when it is outside any department.
+// node: its team.get row (department / departmentHead); pos: its team.position position (a head's own `department`).
+export function deptOf(node, pos, names = {}) {
+  const nm = nameFn(names);
+  const id = node?.id || pos?.id || null;
+  const own = pos && !pos.parent && typeof pos.department === 'string' ? pos.department.trim() : '';
+  const name = (typeof node?.department === 'string' ? node.department.trim() : '') || own;
+  if (!name) return null;
+  const head = node?.departmentHead || (own ? id : null);
+  const isHead = !!head && head === id;
+  return { name, head: head || null, isHead, headName: head ? (isHead ? node?.name || pos?.name || nm(head) : nm(head)) : '' };
+}
+// the CEO's departments from team.get rows: [{ name, headId, headName, count }] in report order
+export function deptList(tree) {
+  return (deptGroups(tree) || []).filter((g) => !g.none).map(({ name, headId, headName, count }) => ({ name, headId, headName, count }));
+}
+
+// The rows on screen, CEO root first. Each: { id, depth, level, hasKids, open, indent, crumb, parentId, posinset, setsize }.
+// With departments, the first row of each department (its head) and of the "No department" rest carries
+// group: { key, name, headId, headName, count, none? }: the tree draws a header there. Keyboard and levels ignore it.
 export function visibleRows(tree, open, { phone = false } = {}) {
   const ix = indexTree(tree);
   const step = phone ? INDENT.phone : INDENT.desktop;
-  const out = [{ id: CEO, ceo: true, depth: 0, level: 1, hasKids: ix.roots.length > 0, open: true, indent: 0, crumb: null, parentId: null, posinset: 1, setsize: 1 }];
+  const groups = deptGroups(tree, ix);
+  const roots = groups ? groups.flatMap((g) => g.roots) : ix.roots;
+  const starts = new Map((groups || []).map((g) => [g.roots[0], g]));
+  const out = [{ id: CEO, ceo: true, depth: 0, level: 1, hasKids: roots.length > 0, open: true, indent: 0, crumb: null, parentId: null, posinset: 1, setsize: 1 }];
   const add = (id, parentId, i, n) => {
     const d = ix.depth.get(id);
     const kids = ix.kids.get(id) || [];
     const o = kids.length > 0 && isOpen(open, id);
     const levels = phone ? Math.min(d, PHONE_LEVELS) : d;
     const parentName = parentId && parentId !== CEO ? ix.byId.get(parentId)?.name : null;
-    out.push({ id, depth: d, level: d + 1, hasKids: kids.length > 0, open: o, indent: levels * step,
+    const row = { id, depth: d, level: d + 1, hasKids: kids.length > 0, open: o, indent: levels * step,
       crumb: phone && d > PHONE_LEVELS && parentName ? parentName : null,
-      parentId: parentId || CEO, posinset: i + 1, setsize: n, orphan: ix.orphan.has(id) });
+      parentId: parentId || CEO, posinset: i + 1, setsize: n, orphan: ix.orphan.has(id) };
+    const g = !parentId && starts.get(id);
+    if (g) { const { roots: _r, ...head } = g; row.group = head; }
+    out.push(row);
     if (o) kids.forEach((k, j) => add(k, id, j, kids.length));
   };
-  ix.roots.forEach((id, i) => add(id, null, i, ix.roots.length));
+  roots.forEach((id, i) => add(id, null, i, roots.length));
   return out;
 }
 
@@ -477,12 +527,29 @@ export function chatRows(chats, now = Date.now()) {
 }
 
 // ---------------------------------------------------------------- proposals + inbox
+// a card's own names (the engine puts every id it mentions in p.names) come first, then the view's map, else the id.
+// names: { id: name } or id => name; the result has the same kind.
+export function cardNames(p, names = {}) {
+  const own = p?.names && typeof p.names === 'object' ? p.names : null;
+  if (!own) return names;
+  if (typeof names === 'function') return (id) => (id != null && own[id]) || names(id);
+  return { ...(names || {}), ...own };
+}
 export function proposalTitle(p, names = {}) {
   if (!p) return '';
   if (p.title) return p.title;
   const d = p.draft || {};
-  const who = (id) => names[id] || d.name || id;
-  if (p.action === 'create') return `New position: ${d.name || p.target} under ${p.parent || d.parent ? names[p.parent || d.parent] || p.parent || d.parent : 'the CEO'}`;
+  const nm = nameFn(cardNames(p, names));
+  const who = (id) => (nm(id) !== id ? nm(id) : d.name || id);
+  const dc = p.deptChange && typeof p.deptChange === 'object' ? p.deptChange : null;
+  if (dc && dc.kind !== 'join') {
+    const head = dc.headName || (dc.head ? nm(dc.head) : '');
+    if (dc.kind === 'new') return `New department: ${dc.name}${head ? `, headed by ${head}` : ''}`;
+    if (dc.kind === 'rename') return `Rename department: ${dc.from} to ${dc.name}`;
+    if (dc.kind === 'close') return p.action === 'retire' ? `Retire ${who(p.target)}; the ${dc.name} department closes` : `Close department: ${dc.name}`;
+    if (dc.kind === 'move') return `Move ${deptMove(who(p.target), dc.from, dc.name)}`;
+  }
+  if (p.action === 'create') { const par = p.parent || d.parent; return `New position: ${d.name || p.target} under ${par ? nm(par) : 'the CEO'}`; }
   if (p.action === 'edit') return `Change ${who(p.target)}`;
   if (p.action === 'retire') return `Retire ${who(p.target)}`;
   if (p.action === 'company') return `New company: ${d.name || ''}`.trim();
@@ -590,12 +657,13 @@ export function briefDiffRows(text, ctx = 2) {
   if (gap) rows.push({ t: 'gap', n: gap });
   return { rows, added: lines.filter((l) => l.t === 'add').length, removed: lines.filter((l) => l.t === 'del').length };
 }
-const FIELDS = [['name', 'Name'], ['parent', 'Reports to'], ['remit', 'Remit'], ['scope', 'Scope'], ['model', 'Model'], ['effort', 'Effort'], ['status', 'Status']];
+const FIELDS = [['name', 'Name'], ['parent', 'Reports to'], ['department', 'Department'], ['remit', 'Remit'], ['scope', 'Scope'], ['model', 'Model'], ['effort', 'Effort'], ['status', 'Status']];
 const STATUS_WORD = { active: 'Active', paused: 'Paused', retired: 'Retired' };
 export function fieldChanges(diff, names = {}) {
   const nm = nameFn(names);
   const word = (k, v) => {
     if (k === 'parent') return v == null ? 'the CEO' : nm(v);
+    if (k === 'department') return v == null || v === '' ? 'No department' : String(v);
     if (k === 'scope') return scopeWords(v);
     if (k === 'status') return STATUS_WORD[v] || String(v ?? '');
     if (k === 'model' || k === 'effort') return v == null ? 'Helm default' : String(v);
@@ -605,9 +673,29 @@ export function fieldChanges(diff, names = {}) {
   return FIELDS.filter(([k]) => diff && diff[k] && typeof diff[k] === 'object' && 'to' in diff[k])
     .map(([k, label]) => ({ key: k, label, from: word(k, diff[k].from), to: word(k, diff[k].to), fromTitle: title(k, diff[k].from), toTitle: title(k, diff[k].to) }));
 }
-// Everything a proposal changes, in words. names: { id: name } or id => name. current: the position's duties now
-// (to name a removed duty). -> { fields, brief, powers, duties, excess }
-export function proposalChanges(p, names = {}, { duties: current = [] } = {}) {
+// A department change (p.deptChange, engine) in plain words; who = the target's name (for a move).
+//   new     "Starts the Legal department, headed by General Counsel"
+//   rename  "Renames the Legal department to Legal & Compliance"
+//   close   "Closes the Legal department"
+//   move    "Moves Tax Specialist from Legal to Finance (head: Controller)", "… out of Legal", "… into Finance (head: …)"
+//   join    "In Legal (head: General Counsel)"
+export const deptMove = (who, from, to) => (from && to ? `${who} from ${from} to ${to}` : from ? `${who} out of ${from}` : to ? `${who} into ${to}` : who);
+export function deptWords(dc, names = {}, who = 'the position') {
+  if (!dc || typeof dc !== 'object' || !dc.kind) return '';
+  const nm = nameFn(names);
+  const head = (typeof dc.headName === 'string' && dc.headName.trim()) || (dc.head ? nm(dc.head) : '');
+  if (dc.kind === 'new') return `Starts the ${dc.name} department${head ? `, headed by ${head}` : ''}`;
+  if (dc.kind === 'rename') return `Renames the ${dc.from} department to ${dc.name}`;
+  if (dc.kind === 'close') return `Closes the ${dc.name} department`;
+  if (dc.kind === 'move') return `Moves ${deptMove(who, dc.from, dc.name)}${dc.name && head ? ` (head: ${head})` : ''}`;
+  if (dc.kind === 'join') return `In ${dc.name}${head ? ` (head: ${head})` : ''}`;
+  return '';
+}
+// Everything a proposal changes, in words. names: { id: name } or id => name (the card's own p.names win). current:
+// the position's duties now (to name a removed duty). -> { fields, brief, powers, duties, excess, dept }
+// dept: { kind, name, from, headName, text } from p.deptChange, or null (also null when a Department field row says it)
+export function proposalChanges(p, namesIn = {}, { duties: current = [] } = {}) {
+  const names = cardNames(p, namesIn);
   const diff = p?.diff && typeof p.diff === 'object' ? p.diff : null;
   const d = p?.draft || {};
   const scope = d.scope;
@@ -620,12 +708,19 @@ export function proposalChanges(p, names = {}, { duties: current = [] } = {}) {
     duties = { added: add.filter((x) => !both.includes(x)).map((id) => duty(id, d.duties)), changed: both.map((id) => duty(id, d.duties)),
       removed: rem.filter((x) => !both.includes(x)).map((id) => duty(id, current)) };
   }
+  const fields = diff ? fieldChanges(diff, names) : [];
+  const dc = p?.deptChange && typeof p.deptChange === 'object' && p.deptChange.kind ? p.deptChange : null;
+  const nm = nameFn(names);
+  const who = d.name || (p?.target ? nm(p.target) : '') || 'the position';
+  const dept = dc && !(dc.kind !== 'move' && dc.kind !== 'join' && fields.some((f) => f.key === 'department'))
+    ? { kind: dc.kind, name: dc.name ?? null, from: dc.from ?? null, headName: dc.headName || (dc.head ? nm(dc.head) : ''), text: deptWords(dc, names, who) } : null;
   return {
-    fields: diff ? fieldChanges(diff, names) : [],
+    fields,
     brief: typeof diff?.brief === 'string' ? briefDiffRows(diff.brief) : null,
     powers: diff?.powers ? { added: pw(diff.powers.added), removed: pw(diff.powers.removed) } : null,
     duties,
     excess: excessRows(excessOf(p), names, scope),
+    dept,
   };
 }
 // a create card's powers as chips; cut = the engine listed it in excess (a token's folders are listed in the notice)

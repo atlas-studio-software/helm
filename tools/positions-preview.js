@@ -16,6 +16,7 @@
 //   expand=t1,t2        cross-talk tickets to open (clicks their .pos-ct-head after render)
 //   edit=1              clicks Edit in Brief / Notebook so the editor shows
 //   details=1           opens every <details> in the view (handoffs, proposal drafts)
+//   details=p1,p2       opens only the <details> inside those proposal cards ([data-proposal="<id>"])
 //   scroll=<css>        scrolls that element into view (block: center) once the scene settled
 //   theme=light         the light look (ui/lib/mock-data.js reads it into the mock settings)
 //   freeze=1            no transitions / animations (screenshots measure the end state)
@@ -141,10 +142,17 @@ async function pageMain() {
       if (head.getAttribute('aria-expanded') !== 'true') head.click();
       await waitFor(() => document.querySelector(`.pos-ct[data-ticket="${CSS.escape(t)}"] > .pos-ct-body`), 3000, `cross-talk ticket ${t} body`);
     }
-    if (q.get('details')) {
+    if (q.get('details') === '1') {
       const all = [...document.querySelectorAll('.pos-view details')];
       if (!all.length) throw new Error('details=1: no <details> in the view');
       for (const d of all) d.open = true;
+    } else if (q.get('details')) {
+      for (const id of list('details')) {
+        const card = await waitFor(() => document.querySelector(`.pos-view [data-proposal="${CSS.escape(id)}"]`), 3000, `proposal card ${id} ([data-proposal])`);
+        const all = [...card.querySelectorAll('details')];
+        if (!all.length) throw new Error(`details=${id}: the card has no <details>`);
+        for (const d of all) d.open = true;
+      }
     }
     if (q.get('scroll')) {
       const el = await waitFor(() => document.querySelector(q.get('scroll')), 3000, `scroll target ${q.get('scroll')}`);

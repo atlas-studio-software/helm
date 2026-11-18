@@ -57,7 +57,9 @@ const SCENES = [
   { name: 'proposal-draft', q: { sections: 'proposals', details: '1', scroll: '.pos-csecs' } },   // the open proposal's draft details
   { name: 'ceo', q: { sel: '@ceo' }, detail: true },
   { name: 'paused', q: { sel: 'social', tab: 'overview' }, detail: true },   // a paused position (Resume, disabled duty)
-  { name: 'harbor', q: { company: 'harbor-books', sel: 'support' } },   // second company: one position, nothing pending
+  { name: 'harbor', q: { company: 'harbor-books', sel: 'support' } },   // second company: one position, nothing pending, no departments
+  { name: 'departments', q: { sel: 'tax', tab: 'overview' } },   // Legal / Marketing / Finance headers + "No department" (QA Engineer); 1280: Tax Specialist's Overview says Legal (head: General Counsel)
+  { name: 'dept-proposal', q: { sections: 'proposals', details: 'p_6e3b', scroll: '[data-proposal="p_6e3b"]' } },   // the open "New department: Business Development" card, its draft open
   { name: 'one', q: { mode: 'one', sel: 'legal' } },   // one company: no switcher, its name in the counts
   { name: 'off', q: { mode: 'off' } },
   { name: 'empty', q: { mode: 'empty' } },

@@ -199,7 +199,7 @@ test('asked-by: CEO question parsed out of <helm-ask>, handed files as chips, ne
   const exp = C.askedByModel({ origin: 'answer', text: '<helm-answer ticket="t_1" from="legal" state="expired">Stopped at Tax.</helm-answer>' }, CEO);
   assert.deepEqual([exp.label, exp.sub, exp.text], ['No answer from Legal', 'expired after 2 h', 'Stopped at Tax.']);
   const adds = C.askedByModel({ origin: 'answer', text: '<helm-answer ticket="t_1" from="legal" kind="followup" via="tax">More.</helm-answer>' }, CEO);
-  assert.deepEqual([adds.label, adds.sub], ['Legal adds', 'from Tax']);
+  assert.deepEqual([adds.label, adds.sub], ['Legal adds', 'from Tax Specialist'], 'via: the open chat names tax, not the id in words');
   assert.equal(C.askedByModel({ origin: 'seed', seed: { fromChat: 3 }, text: 'x' }).line, 'Fresh chat · seeded from the brief and notebook, and the handoff of chat 3');   // older shape
   fresh();
   ui.mount(C.TeamUserMsg, { item: { id: 'u1', type: 'user', origin: 'ask', ts: NOW, text, ask: { from: { kind: 'ceo' } } }, sid: TAX.id });
@@ -415,8 +415,9 @@ test('engine create proposal: draft in words, power chips with the cut ones red,
   const rows = cutRows();
   assert.deepEqual(rows.map((r) => [r.power, r.by]), p.excess.map((x) => [x.power, x.by]), 'one row per engine excess entry, in order');
   assert.match(rows[0].text, /^WebFetch.*Payroll Tax Specialist/);
-  assert.match(rows[1].text, /^Bash on.*Legal/);
-  assert.match(rows[2].text, /^Subagents.*Legal/);
+  assert.match(rows[1].text, /^Bash on.*General Counsel has no Bash/, 'p.names: the manager by its name, never its id in words ("Legal")');
+  assert.match(rows[2].text, /^Subagents.*General Counsel/);
+  shows(txt, ['Department', 'In Legal (head: General Counsel)']);
   assert.ok(txt.indexOf('These powers would be cut') < txt.indexOf('Approve'), 'the cut notice comes before Approve');
 });
 
@@ -442,7 +443,7 @@ test('engine edit proposal: every field from -> to, powers + / −, duties, the 
   assert.deepEqual(bd.filter((n) => /\badd\b/.test(n.p.class)).map((n) => ui.text(n)), ['+## Contractors', '+- Withholding rules for contractors abroad.', '+ ']);
   assert.equal(node('brief-toggle'), undefined, 'a short brief diff shows open, nothing behind a disclosure');
   assert.deepEqual(cutRows().map((r) => [r.power, r.by]), [['write', 'legal'], ['bash', 'legal']]);
-  assert.match(cutRows()[0].text, /^Write C:\/Users\/you\/northwind-app.*Legal/);
+  assert.match(cutRows()[0].text, /^Write C:\/Users\/you\/northwind-app.*General Counsel does not have it/);
   assert.ok(txt.indexOf('- Withholding rules') < txt.indexOf('Approve'), 'every change comes before Approve');
   // a long brief diff folds under a disclosure that still says how much changed
   const long = { ...p, diff: { brief: Array.from({ length: 30 }, (_, i) => (i % 3 ? ` line ${i}` : `+new ${i}`)).join('\n') } };
@@ -461,11 +462,11 @@ test('engine reparent / retire / company proposals: reports-to in words, who ret
   freshNw();
   ui.mount(C.TeamItem, { item: propItem(F.proposals.reparent), sid: NW.id });
   await ui.settle();
-  shows(ui.text(), ['Change Tax Specialist', 'Reports to', 'Legal→the CEO']);
+  shows(ui.text(), ['Move Tax Specialist out of Legal', 'Reports to', 'General Counsel→the CEO', 'Moves Tax Specialist out of Legal']);
   assert.equal(cutRows().length, 0);
   ui.mount(C.TeamItem, { item: propItem(F.proposals.retire), sid: NW.id });
   await ui.settle();
-  shows(ui.text(), ['Retire Marketing Manager', 'Marketing Manager moves to an agency.', 'None: no one reports to it']);
+  shows(ui.text(), ['Retire Marketing Manager; the Marketing department closes', 'Marketing Manager moves to an agency.', 'None: no one reports to it', 'Closes the Marketing department']);
   assert.doesNotMatch(ui.text(), /Also retires/);
   const moved = { ...F.proposals.retire, draft: { ...F.proposals.retire.draft, retires: ['legal'], moves: [{ id: 'tax', from: 'legal', to: null }] } };
   ui.mount(C.TeamItem, { item: propItem(moved), sid: NW.id });
@@ -504,7 +505,8 @@ test('engine access card that widens managers: ancestor ids in names on the alwa
   ui.mount(Q.RequestItem, { item, sid: PT.id });
   await ui.settle();
   assert.equal(ui.text(node('access-always')), 'Approve always (also widens Tax Specialist and General Counsel)');
-  assert.deepEqual(Q.accessModel({ ...item, access: { ...item.access, ancestors: ['legal'] } }, PT).ancestors, [{ id: 'legal', name: 'Legal' }], 'a subset: matched by slug');
+  assert.deepEqual(Q.accessModel({ ...item, access: { ...item.access, ancestors: ['legal'] } }, PT).ancestors, [{ id: 'legal', name: 'General Counsel' }], 'a subset: named by access.names');
+  assert.deepEqual(Q.accessModel({ ...item, access: { ...item.access, names: undefined, ancestors: ['legal'] } }, PT).ancestors, [{ id: 'legal', name: 'Legal' }], 'no names map and no chat open: the id in words (older engines)');
 });
 
 test('engine access records: timeout, an always on a once-only card was saved once, a real always names who it saved to', async (t) => {
@@ -633,4 +635,60 @@ test('rollover notice: the { type: team, kind: notice, text } item a rolled chat
   assert.match(line.p.class, /sys-line tc-notice/);
   assert.equal(ui.text(), 'Fresh chat started (chat 3); the handoff and notebook carried over.');
   assert.deepEqual(acts(), [], 'nothing to press');
+});
+
+// ---------- departments (spec 2.4): deptChange in words, the Department field row, p.names before any guess ----------
+test('department cards: new / rename / close / join in words; a Department field row; names from p.names, never the id in words', async (t) => {
+  if (skip(t)) return;
+  freshNw([NW]);   // no position chat open: every name comes from the card
+  const nu = { id: 'p_d1', company: 'northwind-goods', action: 'create', target: 'bizdev', status: 'open', title: 'New department: Business Development, headed by Head of Business Development',
+    draft: { id: 'bizdev', name: 'Head of Business Development', parent: null, department: 'Business Development', remit: 'Partnerships and new markets.' },
+    names: { bizdev: 'Head of Business Development' }, deptChange: { kind: 'new', name: 'Business Development', head: 'bizdev', headName: 'Head of Business Development' } };
+  ui.mount(C.TeamItem, { item: propItem(nu), sid: NW.id });
+  await ui.settle();
+  shows(ui.text(), ['New department: Business Development, headed by Head of Business Development', 'Reports to', 'the CEO', 'Department', 'Starts the Business Development department, headed by Head of Business Development']);
+  assert.equal(ui.findAll((n) => n.p && n.p['data-dept-change'] === 'new').length, 1);
+
+  // a rename is an edit of the head: the Department field row says it, so no second sentence
+  const rename = { id: 'p_d2', company: 'northwind-goods', action: 'edit', target: 'legal', status: 'open', title: 'Rename department: Legal to Legal & Compliance',
+    diff: { department: { from: 'Legal', to: 'Legal & Compliance' } }, names: { legal: 'General Counsel' },
+    deptChange: { kind: 'rename', from: 'Legal', name: 'Legal & Compliance', head: 'legal', headName: 'General Counsel' } };
+  ui.mount(C.TeamItem, { item: propItem(rename), sid: NW.id });
+  await ui.settle();
+  const txt = ui.text();
+  shows(txt, ['Rename department: Legal to Legal & Compliance', 'Department', 'Legal→Legal & Compliance']);
+  assert.doesNotMatch(txt, /Renames the Legal department|Nothing that differs/);
+  assert.equal(ui.findAll((n) => n.p && n.p['data-field'] === 'department').length, 1);
+
+  // no engine title: the card words the change itself, names from p.names
+  const { title: _t, ...untitled } = rename;
+  ui.mount(C.TeamItem, { item: propItem(untitled), sid: NW.id });
+  await ui.settle();
+  shows(ui.text(), ['Rename department: Legal to Legal & Compliance']);
+  const close = { id: 'p_d3', company: 'northwind-goods', action: 'edit', target: 'legal', status: 'open', diff: { department: { from: 'Legal', to: null } }, names: { legal: 'General Counsel' },
+    deptChange: { kind: 'close', name: 'Legal', head: 'legal', headName: 'General Counsel' } };
+  ui.mount(C.TeamItem, { item: propItem(close), sid: NW.id });
+  await ui.settle();
+  shows(ui.text(), ['Close department: Legal', 'Legal→No department']);
+
+  // a create under a department: "In Legal"; the parent named from p.names, not "Tax" from its id
+  const join = { id: 'p_d4', company: 'northwind-goods', action: 'create', target: 'vat', status: 'open', draft: { id: 'vat', name: 'VAT Specialist', parent: 'tax' },
+    names: { vat: 'VAT Specialist', tax: 'Tax Specialist', legal: 'General Counsel' }, deptChange: { kind: 'join', name: 'Legal', head: 'legal', headName: 'General Counsel' },
+    excess: [{ power: 'bash', value: 'on', max: 'off', by: 'legal' }] };
+  ui.mount(C.TeamItem, { item: propItem(join), sid: NW.id });
+  await ui.settle();
+  shows(ui.text(), ['New position: VAT Specialist under Tax Specialist', 'In Legal (head: General Counsel)', 'General Counsel has no Bash']);
+  assert.doesNotMatch(ui.text(), /Legal has no Bash/);
+  assert.equal(C.namesFor(join)('legal'), 'General Counsel');
+  assert.equal(C.namesFor({ ...join, names: undefined })('legal'), 'Legal', 'older engines without names: the id in words');
+});
+
+test('tool rows and ask cards name a position by its open chat, not by its id in words', (t) => {
+  if (skip(t)) return;
+  freshNw([NW, PT, TS, NWP('legal', 'General Counsel', null)]);
+  assert.equal(C.teamToolDescribe({ name: 'mcp__team__team_roster', status: 'done', input: { under: 'legal' } }).target, 'General Counsel');
+  assert.equal(C.teamToolDescribe({ name: 'mcp__team__team_propose', status: 'done', input: { action: 'edit', id: 'tax' } }).target, 'edit Tax Specialist');
+  assert.equal(C.teamToolDescribe({ name: 'mcp__team__team_roster', status: 'done', input: { under: 'finance' } }).target, 'Finance', 'no chat open: the id in words');
+  assert.equal(C.posName('legal'), 'General Counsel');
+  assert.equal(C.posName(''), '');
 });
