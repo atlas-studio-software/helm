@@ -192,8 +192,9 @@ test('house rules: the team root copy wins, else the shipped default; the defaul
     assert.match(O.loadHouseRules(w.teamRoot), /OWN-RULES-8888/);
     assert.match(O.positionPrompt(legal, legalPowers, null, ctxFor(w)).text, /OWN-RULES-8888/);
     assert.match(O.positionPrompt(legal, legalPowers, null, ctxFor(w, { houseRules: 'GIVEN-9999' })).text, /GIVEN-9999/);
-    // the six rules, nothing about anyone's other projects
-    assert.strictEqual((def.match(/^\d\. /gm) || []).length, 6);
+    // the seven rules, nothing about anyone's other projects
+    assert.strictEqual((def.match(/^\d\. /gm) || []).length, 7);
+    assert.match(def, /name it by the job title that person would hold at a real company/, 'rule 7: reports are named by real job titles');
     for (const re of [/with numbers/, /did not verify/, /send.*post.*pay.*push/s, /deploy/, /publish/, /only what a question needs/, /request_access/, /notebook current/, /decisions/i, /facts/i, /open items/i]) assert.match(def, re);
     for (const bad of [/the owner/i, /cloudtest/i, /atlas/i, /helm-team/i, /C:\//]) assert.ok(!bad.test(def), String(bad));
     assert.ok(def.length < 2000, `short (${def.length} chars)`);

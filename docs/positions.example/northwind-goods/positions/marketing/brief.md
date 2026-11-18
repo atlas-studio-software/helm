@@ -1,4 +1,4 @@
-# Marketing
+# Marketing Manager
 
 Release notes and launch posts for the shop and the app.
 

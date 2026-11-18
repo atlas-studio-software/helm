@@ -1526,12 +1526,12 @@ team?: { company: "example-co", companyName: "Example Co" }         // a CEO ses
   company, state, detail, chain: [{ ticket, parentTicket: id | null, to, name, state, detail, sinceMs }] }`, patched
   live (`session.itemUpdate`) on every `team.ask.updated` for that ticket: the item is found by the event's
   `toolUseId` when the CLI gave one, else as that chat's running ask. `state` is a ticket state (below). `detail` is
-  the state in words ("queued: waiting for Legal to be free", "working 6m", "waiting on Tax Specialist").
+  the state in words ("queued: waiting for General Counsel to be free", "working 6m", "waiting on Tax Specialist").
 - `request` items: `kind: "access"` with `access: { kind: "read" | "write" | "tool" | "bash" | "outward", target,
-  why, position: { id, name, path: ["Legal", "Tax Specialist"] }, ancestors?: ["legal"], outward: boolean,
+  why, position: { id, name, path: ["General Counsel", "Tax Specialist"] }, ancestors?: ["legal"], outward: boolean,
   onceOnly?: true, warn?: true, command?: string, waitMin: 30 }`.
   - `ancestors`: the positions an "Approve always" would also widen, nearest first (the button then reads "Approve
-    always (also widens Legal)"). `command`: the exact Bash command, or the tool input as JSON, for an outward card.
+    always (also widens General Counsel)"). `command`: the exact Bash command, or the tool input as JSON, for an outward card.
   - `onceOnly`: "Approve always" cannot be kept, so offer Approve once / Deny only. Set when the target is beyond the
     company (a path outside the company folders can never be a standing power). Outward cards are once-only too but
     carry `outward: true` instead.
@@ -1554,8 +1554,8 @@ team?: { company: "example-co", companyName: "Example Co" }         // a CEO ses
       excess? }`; on an edit of the company: `{ folders: { added: [], removed: [] }, name?: { from, to } }`.
     - `excess`: what the draft's powers go beyond the manager (kept, but cut by the tree rule).
     - `error`: why the last approval failed re-validation (the card stays open). `result`: the approval in words
-      ("Tax Specialist created under Legal"). `ref`: the item's `ref` for an imported proposal.
-  - `answer?: { ticket, from: { id, name }, text, state, followup?: true }`: the "Legal answered after you stopped"
+      ("Tax Specialist created under General Counsel"). `ref`: the item's `ref` for an imported proposal.
+  - `answer?: { ticket, from: { id, name }, text, state, followup?: true }`: the "General Counsel answered after you stopped"
     card (Show, Send to CEO).
   - `text?`: a notice, e.g. "Fresh chat started: this one was full".
 
@@ -1570,7 +1570,7 @@ or past expiry and still being worked on) · `expired` (2 h after the root ask) 
 | method | params | result |
 | --- | --- | --- |
 | `team.list` | `{}` | `{ enabled, root, rootProblem?, companies: [{ id, name, folders, positions: n, needsYou: n }], proposals?: [proposal] }`. `root` is the resolved team root. `positions` counts live (active + paused) positions. `needsYou` = pending access requests + open proposals + undismissed inbox entries with `needsOwen`. `proposals`: the open proposals for companies that do not exist yet (`action: "company"`, `company: null`; shape as in the `team` item), present only when there are any. Off or not running: `companies: []` and no `proposals` (see above) |
-| `team.get` | `{ company }` | `{ company: { id, name, folders }, tree: [{ id, name, parent, remit, status: "active" \| "paused", depth, reports: [id], openItems: n, nextDuty?: { id, title, at }, busy?: "answering CEO", pending: { requests: n, proposals: n }, problem? }], proposals: [proposal], limits }`. `tree` is depth-first in display order (top-level positions have `depth: 1`). `openItems`: unchecked `- [ ]` lines in the notebook. `busy`: "answering CEO" / "answering Legal" / "running duty Monthly review" / "starting a fresh chat". `pending.proposals` counts the open proposals whose `target` or `parent` is that position. `problem`: why a hand-edited `position.json` failed validation (the last good version stays in force). `proposals`: the company's proposals, open and decided (decided ones are kept 7 days), newest first. `limits`: `{ depthCap: 5, reportsPerManager: 10, positionsPerCompany: 30, asksPerPositionHour: 20, asksPerCompanyDay: 200, subAsksPerTicket: 3, chainTickets: 8, expiryH: 2, waitS: [30, 600], questionChars: 20000, colleagueChars: 2000 }` |
+| `team.get` | `{ company }` | `{ company: { id, name, folders }, tree: [{ id, name, parent, remit, status: "active" \| "paused", depth, reports: [id], openItems: n, nextDuty?: { id, title, at }, busy?: "answering CEO", pending: { requests: n, proposals: n }, problem? }], proposals: [proposal], limits }`. `tree` is depth-first in display order (top-level positions have `depth: 1`). `openItems`: unchecked `- [ ]` lines in the notebook. `busy`: "answering CEO" / "answering General Counsel" / "running duty Monthly review" / "starting a fresh chat". `pending.proposals` counts the open proposals whose `target` or `parent` is that position. `problem`: why a hand-edited `position.json` failed validation (the last good version stays in force). `proposals`: the company's proposals, open and decided (decided ones are kept 7 days), newest first. `limits`: `{ depthCap: 5, reportsPerManager: 10, positionsPerCompany: 30, asksPerPositionHour: 20, asksPerCompanyDay: 200, subAsksPerTicket: 3, chainTickets: 8, expiryH: 2, waitS: [30, 600], questionChars: 20000, colleagueChars: 2000 }` |
 | `team.position` | `{ company, id }` | `{ position: { ...position.json, effective: powers \| null, limitedBy: { "<key>": "<id>" } }, chats: [chats.json entry], duties: [{ ...duty, nextAt?, last?: { at, state, reason?, ticket? } }], grants: [grants.jsonl line], pending: { requests: [{ requestId, sessionId, access, kind, target, at }], proposals: [proposal] } }`. Also answers for a retired position (`status: "retired"`, `effective: null`, `limitedBy: {}`). See "limitedBy" below. `pending.requests`: the position's open access cards, oldest first (`access` as on the `request` item; Team view answers one in place: `sessions.respond { id: sessionId, requestId, response }`). `pending.proposals`: open proposals whose `target` or `parent` is this position. `grants` is newest first (at most the last 200 lines of the company's log) |
 | `team.file.read` | `{ company, id, file: "brief" \| "notebook" }` | `{ text, mtime }` |
 | `team.file.write` | `{ company, id, file, text, expectMtime }` | `{ mtime }`. `conflict` when the file changed after `expectMtime`. The previous text is kept as `<file>.bak` (like claude-config). A brief save adds an inbox `flag` entry ("Brief edited by …", `needsOwen: false`). If the position's chat has started, its next message carries the change as a `<helm-note>` (a chat not started yet reads the new file in its seed). Refused (`not_found`) for a retired position |
@@ -1643,9 +1643,9 @@ team: {
 - Test-only: `HELM_TEST_TEAM_ROLL_PCT` overrides `rollPct` (tools/team-live.js).
 
 ### Mock
-- `ui/lib/mock-data.js`: `settings.team` (on), a CEO session `s_ceo` (`team`; a live Ask card on Legal with a
-  chain to Tax Specialist) and Legal's current chat `s_pos_legal` (`position`, chat 2: a seed line, an "Asked by
-  CEO" bubble, its own `team_ask` to Tax Specialist). Legal's ended chat 1, `s_pos_legal_1`, is in `sessionsOrg`
+- `ui/lib/mock-data.js`: `settings.team` (on), a CEO session `s_ceo` (`team`; a live Ask card on General Counsel with a
+  chain to Tax Specialist) and General Counsel's current chat `s_pos_legal` (`position`, chat 2: a seed line, an "Asked by
+  CEO" bubble, its own `team_ask` to Tax Specialist). General Counsel's ended chat 1, `s_pos_legal_1`, is in `sessionsOrg`
   (`?org=1`). All use company `example-co` ("Example Co") and positions `legal` and `tax`.
 - `ui/lib/mock-positions.js`: the `team.*` methods for "Example Co" with a 3-level tree, an open proposal, an
   access request and a live ask chain, wired by one `case 'team.*'` line in `ui/lib/transport.js`, like

@@ -1,6 +1,6 @@
 {
   "id": "app-qa",
-  "name": "App QA",
+  "name": "QA Engineer",
   "parent": null,
   "remit": "Tests and small fixes for the Northwind app, in its own worktree.",
   "scope": {

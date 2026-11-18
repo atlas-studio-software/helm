@@ -62,20 +62,20 @@ function engineFixtures() {
 
   const proposals = {};
   proposals.create = card(P.propose({ company: CID, by: ceo, action: 'create', draft: {
-    id: 'state-payroll', name: 'State Payroll', parent: 'payroll-tax', remit: 'State payroll filings and their deadlines.',
-    brief: '# State Payroll\n\nState payroll filings and their deadlines.\n',
+    id: 'state-payroll', name: 'State Payroll Analyst', parent: 'payroll-tax', remit: 'State payroll filings and their deadlines.',
+    brief: '# State Payroll Analyst\n\nState payroll filings and their deadlines.\n',
     powers: { read: ['$workspace', '$company'], write: ['$workspace'], tools: ['Read', 'Grep', 'Glob', 'Write', 'Edit', 'WebSearch', 'WebFetch'], bash: 'on', agents: true, worktree: false },
     duties: [{ id: 'monthly-deadlines', title: 'Monthly deadlines', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 * *', catchUp: 'once' }, prompt: 'List the filings due this month.' }],
     why: 'State filings keep coming up in payroll questions.' } }), 'create');
   const briefNow = fs.readFileSync(path.join(root, CID, 'positions', 'payroll-tax', 'brief.md'), 'utf8');
   proposals.edit = card(P.propose({ company: CID, by: ceo, action: 'edit', draft: {
-    id: 'payroll-tax', name: 'Payroll & Contractors', remit: 'Payroll tax and contractor withholding.', scope: { kind: 'product', folder: app },
+    id: 'payroll-tax', name: 'Contractor Payroll Specialist', remit: 'Payroll tax and contractor withholding.', scope: { kind: 'product', folder: app },
     brief: briefNow.replace(/\n*$/, '\n') + '\n## Contractors\n- Withholding rules for contractors abroad.\n',
     powers: { read: ['$workspace', '$company'], write: ['$workspace', '$scope'], tools: ['Read', 'Grep', 'Glob', 'Write', 'Edit'], bash: 'readonly', agents: false, worktree: false },
     duties: [{ id: 'quarterly-withholding', title: 'Quarterly withholding check', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 1,4,7,10 *', catchUp: 'once' }, prompt: 'Check the withholding tables.' }],
     why: 'Contractor questions land on payroll anyway.' } }), 'edit');
   proposals.reparent = card(P.propose({ company: CID, by: ceo, action: 'edit', draft: { id: 'tax', parent: null, why: 'Tax answers to the CEO directly now.' } }), 'reparent');
-  proposals.retire = card(P.propose({ company: CID, by: ceo, action: 'retire', draft: { id: 'marketing', why: 'Marketing moves to an agency.' } }), 'retire');
+  proposals.retire = card(P.propose({ company: CID, by: ceo, action: 'retire', draft: { id: 'marketing', why: 'Marketing Manager moves to an agency.' } }), 'retire');
   proposals.company = card(P.propose({ company: null, by: { kind: 'none', sessionId: 's_any' }, action: 'company', draft: {
     id: 'harbor-studio', name: 'Harbor Studio', folders: [path.join(os.tmpdir(), 'harbor-studio-site').replace(/\\/g, '/')], why: 'A second business with its own site.' } }), 'company');
 
@@ -112,7 +112,7 @@ function engineFixtures() {
   // team.list `proposals`: open cards of companies that do not exist yet (wire.js proposalList({ company: null, status: 'open' }))
   const listProposals = JSON.parse(JSON.stringify(P.list({ company: null, status: 'open' })));
 
-  // team.crosstalk: runtime.crosstalk over the example log plus a chain (CEO -> Legal, Legal -> Tax answered, as a child)
+  // team.crosstalk: runtime.crosstalk over the example log plus a chain (CEO -> General Counsel, General Counsel -> Tax answered, as a child)
   const { createRuntime } = require(path.join(ROOT, 'main', 'engine', 'team', 'runtime'));
   const ctLine = (dt, o) => { now += dt; store.append(CID, 'crosstalk', o); };
   const ceoAsk = { ticket: 't_fx1', chain: 't_fx1', from: { kind: 'ceo', sessionId: 's_ceo' }, to: 'legal', kind: 'report' };
@@ -163,12 +163,12 @@ function importedFixtures() {
   const job = (o) => ({ team_propose: { action: 'create', brief: brief(o.name), powers: NC, ...o } });
   const file = { kind: 'helm-team-proposals', company: 'harbor-studio', draftedBy: 'a planning chat', proposals: [
     { ref: 'company', team_propose: { action: 'company', id: 'harbor-studio', name: 'Harbor Studio', folders: [site], why: 'A second business with its own site.' } },
-    { ref: 'ops', ...job({ id: 'operations', name: 'Operations', parent: null, remit: 'Orders, suppliers and the weekly numbers.', why: 'Someone has to own the weekly numbers.' }) },
-    { ref: 'books', ...job({ id: 'bookkeeping', name: 'Bookkeeping', parent: 'operations', remit: 'Invoices, receipts and the monthly close.', why: 'Receipts pile up every month.',
+    { ref: 'ops', ...job({ id: 'operations', name: 'Operations Manager', parent: null, remit: 'Orders, suppliers and the weekly numbers.', why: 'Someone has to own the weekly numbers.' }) },
+    { ref: 'books', ...job({ id: 'bookkeeping', name: 'Bookkeeper', parent: 'operations', remit: 'Invoices, receipts and the monthly close.', why: 'Receipts pile up every month.',
       duties: [{ id: 'monthly-close', title: 'Monthly close', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 * *', catchUp: 'once' }, prompt: 'Close last month.' }] }) },
-    { ref: 'web', ...job({ id: 'web-copy', name: 'Web Copy', parent: null, remit: 'Copy for the studio site. Drafts only.', why: 'The site copy is out of date.',
+    { ref: 'web', ...job({ id: 'web-copy', name: 'Copywriter', parent: null, remit: 'Copy for the studio site. Drafts only.', why: 'The site copy is out of date.',
       powers: { ...NC, read: [...NC.read, oldSite], bash: 'readonly' } }) },
-    { ref: 'support', ...job({ id: 'support', name: 'Support', parent: 'operations', remit: 'Answers customer emails, from drafts the owner approves.', why: 'Customer emails need a first draft.' }) },
+    { ref: 'support', ...job({ id: 'support', name: 'Customer Support Specialist', parent: 'operations', remit: 'Answers customer emails, from drafts the owner approves.', why: 'Customer emails need a first draft.' }) },
   ] };
   const result = P.import(file, {});
   if (result.skipped.length) throw new Error(`import fixture skipped: ${JSON.stringify(result.skipped)}`);

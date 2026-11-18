@@ -279,17 +279,17 @@ test('notebookAdd: dated entries in their section, missing headings put back, th
   throwsCode(() => s.notebookAdd(CID, 'legal', 'Gossip', 'x'), 'invalid', /section/);
   throwsCode(() => s.notebookAdd(CID, 'legal', 'Log', '   '), 'invalid', /empty/);
   // the owner deleted the Facts heading by hand
-  fs.writeFileSync(pfile(root, 'marketing', 'notebook.md'), '# Marketing · notebook\n## Decisions\n- old\n## Open items\n## Log\n');
+  fs.writeFileSync(pfile(root, 'marketing', 'notebook.md'), '# Marketing Manager · notebook\n## Decisions\n- old\n## Open items\n## Log\n');
   bump(pfile(root, 'marketing', 'notebook.md'));
   s.notebookAdd(CID, 'marketing', 'Facts', 'The app ships monthly.');
   assert.equal(fs.readFileSync(pfile(root, 'marketing', 'notebook.md'), 'utf8'),
-    '# Marketing · notebook\n## Decisions\n- old\n## Facts\n- 2026-02-01: The app ships monthly.\n## Open items\n## Log\n');
+    '# Marketing Manager · notebook\n## Decisions\n- old\n## Facts\n- 2026-02-01: The app ships monthly.\n## Open items\n## Log\n');
   for (let i = 0; i < 203; i++) s.notebookAdd(CID, 'payroll-tax', 'Log', `did thing ${i}`);
   const log = fs.readFileSync(pfile(root, 'payroll-tax', 'notebook.md'), 'utf8').split('## Log\n')[1].trim().split('\n');
   assert.equal(log.length, 200);
   assert.match(log[0], /did thing 3$/);
   const arch = fs.readFileSync(pfile(root, 'payroll-tax', 'notebook-log-archive.md'), 'utf8');
-  assert.match(arch, /^# Payroll Tax · notebook log archive\n- 2026-02-01: did thing 0\n- 2026-02-01: did thing 1\n- 2026-02-01: did thing 2\n$/);
+  assert.match(arch, /^# Payroll Tax Specialist · notebook log archive\n- 2026-02-01: did thing 0\n- 2026-02-01: did thing 1\n- 2026-02-01: did thing 2\n$/);
 });
 
 test('chats.json: addChat numbers chats, updateChat patches one, handoff capped', () => {

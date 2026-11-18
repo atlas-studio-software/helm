@@ -44,12 +44,12 @@ const CLOSED_DETAILS = 'details:not([open]) > :not(summary) { display: none !imp
 // ---- scenes. `q` = preview URL params; `detail: true` adds screen=detail at phone widths (the detail screen).
 // Ids are the fictional Example Co in ui/lib/mock-positions.js.
 const SCENES = [
-  { name: 'tree-legal', q: { sel: 'legal' } },   // 1280: tree + Legal overview (access request card); phone: the tree list
+  { name: 'tree-legal', q: { sel: 'legal' } },   // 1280: tree + General Counsel overview (access request card); phone: the tree list
   { name: 'tree-deep', q: { mode: 'deep', sel: 'eu-contractors', scroll: '[role="treeitem"][data-id="eu-contractors"]' } },   // phone: depth 4-5 crumb rows
   { name: 'legal-overview', q: { sel: 'legal', tab: 'overview' }, detail: true },
   { name: 'notebook', q: { sel: 'legal', tab: 'notebook' }, detail: true },   // checked + unchecked open items
   { name: 'brief-edit', q: { sel: 'legal', tab: 'brief', edit: '1' }, detail: true },
-  { name: 'powers', q: { sel: 'tax', tab: 'powers' }, detail: true },   // "limited by Legal"
+  { name: 'powers', q: { sel: 'tax', tab: 'powers' }, detail: true },   // "limited by General Counsel"
   { name: 'duties', q: { sel: 'finance', tab: 'duties' }, detail: true },   // daily due within the day, monthly failed last run
   { name: 'chats', q: { sel: 'legal', tab: 'chats', details: '1' }, detail: true },   // ended chat, handoff open
   { name: 'crosstalk', q: { sel: 'legal', tab: 'crosstalk', expand: 't_a1,t_a2' }, detail: true },   // nested chain, both open

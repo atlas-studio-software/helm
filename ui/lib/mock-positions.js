@@ -15,7 +15,7 @@
 //     return (await import('./mock-positions.js')).mockTeam(method, p, { state: S, emit });
 // ?team=<mode> picks a state: one (single company), empty (no company), off (team disabled), root (team root
 // refused), nopositions, error (team.get fails), loading (team.list never answers), conflict (the first file
-// save conflicts), deep (two more levels under Payroll Tax, so depth 4 and 5 exist and the phone's
+// save conflicts), deep (two more levels under Payroll Tax Specialist, so depth 4 and 5 exist and the phone's
 // "… › Manager ›" crumb shows), imported (no company yet: an import left a company card, company null, and four
 // position cards for that company; approving a position card first is refused the way the engine refuses it,
 // approving the company card creates the company). tools/positions-preview.js uses createMockTeam() directly.
@@ -210,35 +210,35 @@ const plainBrief = (p) => brief(p.name, p.remit, ['Send, post, pay or publish an
 export function buildMockTeam(now = Date.now()) {
   const P = (o) => ({ status: 'active', model: null, effort: 'high', scope: { kind: 'company' }, powers: NONCODING, duties: [], createdAt: iso(now - 20 * DAY), version: 1, ...o });
   const positions = {
-    legal: P({ id: 'legal', name: 'Legal', parent: null, remit: 'Privacy pages, terms and contracts for every Example Co product.', version: 3,
+    legal: P({ id: 'legal', name: 'General Counsel', parent: null, remit: 'Privacy pages, terms and contracts for every Example Co product.', version: 3,
       duties: [
         { id: 'privacy-recheck', title: 'Privacy text re-check', enabled: true, trigger: { kind: 'event', event: 'commit', repo: `${HOME}/example-site`, paths: ['**/privacy*', '**/cookies*', '**/terms*'] }, output: 'report', prompt: 'Re-check the privacy, cookies and terms text against what the code now does.' },
         { id: 'terms-weekly', title: 'Weekly terms review', enabled: true, trigger: { kind: 'schedule', cron: '0 10 * * 1', catchUp: 'once' }, output: 'report', prompt: 'List anything in the terms that the last week of changes made untrue.' },
       ] }),
-    // lists more than Legal (its manager) has, as an "Approve always" or a hand edit can leave it: a tool Legal lacks,
-    // Bash (Legal has none) and a folder outside the company folders -> effective.limits / limitedBy
+    // lists more than General Counsel (its manager) has, as an "Approve always" or a hand edit can leave it: a tool General Counsel lacks,
+    // Bash (General Counsel has none) and a folder outside the company folders -> effective.limits / limitedBy
     tax: P({ id: 'tax', name: 'Tax Specialist', parent: 'legal', remit: 'Sales tax, VAT and income-tax questions for Example Co products and payouts.',
       powers: { ...NONCODING, read: [...NONCODING.read, `${HOME}/tax-archive`], tools: [...NONCODING.tools, 'NotebookEdit'], bash: 'readonly' },
       duties: [{ id: 'quarterly-check', title: 'Quarterly deadlines check', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 1,4,7,10 *', catchUp: 'once' }, output: 'report', prompt: 'List tax deadlines due in the next 90 days and what each one needs.' }] }),
-    payroll: P({ id: 'payroll', name: 'Payroll Tax', parent: 'tax', remit: 'Withholding rules for contractors and staff, per country.', createdAt: iso(now - 2 * DAY + 4 * MIN) }),
-    contracts: P({ id: 'contracts', name: 'Contracts', parent: 'legal', remit: 'Reviews supplier and customer contracts and drafts redlines. Never signs.' }),
-    marketing: P({ id: 'marketing', name: 'Marketing', parent: null, remit: 'Release posts, landing page copy and the monthly newsletter. Drafts only, never posts.',
+    payroll: P({ id: 'payroll', name: 'Payroll Tax Specialist', parent: 'tax', remit: 'Withholding rules for contractors and staff, per country.', createdAt: iso(now - 2 * DAY + 4 * MIN) }),
+    contracts: P({ id: 'contracts', name: 'Contracts Manager', parent: 'legal', remit: 'Reviews supplier and customer contracts and drafts redlines. Never signs.' }),
+    marketing: P({ id: 'marketing', name: 'Marketing Manager', parent: null, remit: 'Release posts, landing page copy and the monthly newsletter. Drafts only, never posts.',
       duties: [
         { id: 'release-post', title: 'Release post draft', enabled: true, trigger: { kind: 'event', event: 'release', repo: `${HOME}/example-app`, tag: 'v*' }, output: 'draft', prompt: 'Draft the release post from the commits since the last tag.' },
         { id: 'newsletter', title: 'Newsletter draft', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 * *', catchUp: 'once' }, output: 'draft', prompt: 'Draft this month\'s newsletter.' },
       ] }),
-    social: P({ id: 'social', name: 'Social Posts', parent: 'marketing', status: 'paused', remit: 'Short posts for each release, in the house voice.',
+    social: P({ id: 'social', name: 'Social Media Coordinator', parent: 'marketing', status: 'paused', remit: 'Short posts for each release, in the house voice.',
       duties: [{ id: 'release-thread', title: 'Release thread', enabled: false, trigger: { kind: 'event', event: 'release', repo: `${HOME}/example-app`, tag: 'v*' }, output: 'draft' }] }),
-    finance: P({ id: 'finance', name: 'Finance', parent: null, remit: 'Money check: subscriptions, payouts, refunds and runway.', model: 'claude-sonnet-5-5',
+    finance: P({ id: 'finance', name: 'Controller', parent: null, remit: 'Money check: subscriptions, payouts, refunds and runway.', model: 'claude-sonnet-5-5',
       duties: [
         { id: 'daily-cash', title: 'Daily cash check', enabled: true, trigger: { kind: 'schedule', cron: '0 9 * * *', catchUp: 'skip' }, output: 'report' },
         { id: 'monthly-money', title: 'Monthly money check', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 * *', catchUp: 'once' }, output: 'report' },
       ] }),
-    qa: P({ id: 'qa', name: 'App QA', parent: null, remit: 'Tests the Example App before each release, in its own worktree.', scope: { kind: 'product', folder: `${HOME}/example-app` },
+    qa: P({ id: 'qa', name: 'QA Engineer', parent: null, remit: 'Tests the Example App before each release, in its own worktree.', scope: { kind: 'product', folder: `${HOME}/example-app` },
       powers: { read: ['$workspace', '$scope'], write: ['$workspace', '$scope'], tools: ['Read', 'Grep', 'Glob', 'Write', 'Edit', 'Bash', 'TodoWrite'], bash: 'on', agents: false, worktree: true },
       duties: [{ id: 'release-checks', title: 'Release checks', enabled: true, trigger: { kind: 'event', event: 'commit', repo: '$scope', branch: 'main' }, output: 'report' }] }),
   };
-  const harbor = { support: { id: 'support', name: 'Support', parent: null, remit: 'Answers reader emails, from drafts you approve.', status: 'active', scope: { kind: 'company' }, powers: NONCODING, duties: [], createdAt: iso(now - 6 * DAY), version: 1 } };
+  const harbor = { support: { id: 'support', name: 'Customer Support Specialist', parent: null, remit: 'Answers reader emails, from drafts you approve.', status: 'active', scope: { kind: 'company' }, powers: NONCODING, duties: [], createdAt: iso(now - 6 * DAY), version: 1 } };
   const companies = [
     { id: 'example-co', name: 'Example Co', folders: [`${HOME}/example-site`, `${HOME}/example-app`, `${HOME}/example-docs`], createdAt: iso(now - 21 * DAY), version: 1 },
     { id: 'harbor-books', name: 'Harbor Books', folders: [`${HOME}/harbor-books`], createdAt: iso(now - 6 * DAY), version: 1 },
@@ -246,7 +246,7 @@ export function buildMockTeam(now = Date.now()) {
   const defs = { 'example-co': positions, 'harbor-books': harbor };   // company id -> { position id -> position.json }
   const live = {   // what team.get adds per row: live status, last activity
     legal: { status: 'waiting', lastActivity: { at: now - 12 * MIN, text: 'asked you for read access' } },
-    tax: { status: 'idle', lastActivity: { at: now - 14 * MIN, text: 'answered Legal' } },
+    tax: { status: 'idle', lastActivity: { at: now - 14 * MIN, text: 'answered General Counsel' } },
     payroll: { status: 'idle', lastActivity: { at: now - 2 * DAY, text: 'answered Tax Specialist' } },
     contracts: { status: 'idle', lastActivity: { at: now - 26 * HOUR, text: 'drafted an NDA redline' } },
     marketing: { status: 'working', lastActivity: { at: now - 1 * MIN, text: 'answering CEO' } },
@@ -256,17 +256,17 @@ export function buildMockTeam(now = Date.now()) {
   };
   const files = {   // `${company}/${position}` -> { brief, notebook }
     'example-co/legal': {
-      brief: brief('Legal', 'Keeps every public legal text true to what the products actually do: privacy, cookies and terms pages for the site and the app, plus contract reviews through Contracts.', ['Publish, send or sign anything.', 'Give advice outside Example Co.'], ['The code in the company folders', 'Official regulator pages', 'You'], 'One short answer first, then the evidence (file and line, or URL). Drafts go in work/drafts/.'),
-      notebook: notebook('Legal', {
+      brief: brief('General Counsel', 'Keeps every public legal text true to what the products actually do: privacy, cookies and terms pages for the site and the app, plus contract reviews through Contracts Manager.', ['Publish, send or sign anything.', 'Give advice outside Example Co.'], ['The code in the company folders', 'Official regulator pages', 'You'], 'One short answer first, then the evidence (file and line, or URL). Drafts go in work/drafts/.'),
+      notebook: notebook('General Counsel', {
         decisions: ['2026-11-10: the privacy page lists every stored field in plain words (CEO).'],
         facts: ['The app stores email and display name at sign-up (src/signup.js, 2026-11-16).', 'Analytics is off on the site (site/config.json, 2026-11-12).'],
-        items: [[false, 'Add the display name to "What we collect" on the privacy page'], [false, 'Re-check the cookies text after the analytics change'], [true, 'Terms: new plan names'], [false, 'Ask Contracts for the supplier DPA list']],
+        items: [[false, 'Add the display name to "What we collect" on the privacy page'], [false, 'Re-check the cookies text after the analytics change'], [true, 'Terms: new plan names'], [false, 'Ask Contracts Manager for the supplier DPA list']],
         log: ['11-16 answered CEO: privacy page vs the new sign-up', '11-12 checked the cookies text on the site'],
       }),
     },
   };
   const ITEMS = { tax: [[false, 'Confirm the VAT threshold for digital goods'], [false, 'List states that need a sales-tax permit']],
-    marketing: [[false, 'Landing page: new hero copy'], [false, 'Newsletter: November draft'], [false, 'Release post template'], [false, 'Ask Legal about "no tracking"']],
+    marketing: [[false, 'Landing page: new hero copy'], [false, 'Newsletter: November draft'], [false, 'Release post template'], [false, 'Ask General Counsel about "no tracking"']],
     finance: [[false, 'Cancel the unused design seat']], qa: [[false, 'Flaky sign-up test'], [false, 'Add a test for display names']] };
   const fileOf = (cid, id, file) => {
     const k = `${cid}/${id}`;
@@ -308,7 +308,7 @@ export function buildMockTeam(now = Date.now()) {
   const access = [
     { id: 'ac_legal_1', requestId: 'r_legal_1', company: 'example-co', position: 'legal', sessionId: 's_legal_2', kind: 'read', target: `${HOME}/example-analytics-export`, at: iso(now - 12 * MIN),
       access: { kind: 'read', target: `${HOME}/example-analytics-export`, why: 'The analytics export, to see what the site really collects before answering the privacy question.',
-        position: { id: 'legal', name: 'Legal', path: ['Legal'] }, outward: false, onceOnly: true, waitMin: 30 } },
+        position: { id: 'legal', name: 'General Counsel', path: ['General Counsel'] }, outward: false, onceOnly: true, waitMin: 30 } },
   ];
 
   // ---- proposal cards (proposals.js: newest first by `at`; decided ones stay 7 days)
@@ -317,53 +317,53 @@ export function buildMockTeam(now = Date.now()) {
   const proposals = [];
   {
     // an open create: Tax Specialist proposes a report listing powers beyond its own (excess)
-    const draft = { id: 'state-filings', name: 'State Filings', parent: 'tax', remit: 'Tracks state sales-tax filings and their due dates.',
+    const draft = { id: 'state-filings', name: 'State Tax Analyst', parent: 'tax', remit: 'Tracks state sales-tax filings and their due dates.',
       powers: { ...NONCODING, read: [...NONCODING.read, `${HOME}/state-portal-exports`], tools: [...NONCODING.tools, 'NotebookEdit'], bash: 'readonly' },
       duties: [{ id: 'monthly-filings', title: 'Monthly filings list', enabled: true, trigger: { kind: 'schedule', cron: '0 9 25 * *', catchUp: 'once' }, prompt: 'List the state filings due next month and what each one needs.', output: 'report' }],
       scope: { kind: 'company' }, model: null, effort: 'high',
-      brief: '# State Filings\n\n## What this role covers\nKeeps the list of state sales-tax filings, their due dates and what each needs.\n\n## Never\n- File, pay or send anything.\n' };
+      brief: '# State Tax Analyst\n\n## What this role covers\nKeeps the list of state sales-tax filings, their due dates and what each needs.\n\n## Never\n- File, pay or send anything.\n' };
     const excess = computeExcess(positions, folders, 'example-co', draft.powers, 'tax', { scope: draft.scope, workspaceId: draft.id });
-    proposals.push({ id: 'p_4c2e', company: 'example-co', action: 'create', title: 'New position: State Filings under Tax Specialist',
+    proposals.push({ id: 'p_4c2e', company: 'example-co', action: 'create', title: 'New position: State Tax Analyst under Tax Specialist',
       why: 'Filing deadlines differ per state and the question keeps coming up.', draft, excess, status: 'open',
       by: { kind: 'position', id: 'tax', sessionId: 's_tax_1' }, target: 'state-filings', parent: 'tax', at: iso(now - 25 * MIN) });
   }
   {
-    // an open edit by the CEO: name, remit, scope, brief, powers and a duty change for Contracts
+    // an open edit by the CEO: name, remit, scope, brief, powers and a duty change for Contracts Manager
     const cur = positions.contracts;
     const before = fileOf('example-co', 'contracts', 'brief');
-    const after = before.replace(/^# Contracts$/m, '# Contracts & Suppliers').replace('- Send, post, pay or publish anything.\n', '- Send, post, pay or publish anything.\n- Sign or accept a contract.\n')
+    const after = before.replace(/^# Contracts Manager$/m, '# Procurement and Contracts Manager').replace('- Send, post, pay or publish anything.\n', '- Send, post, pay or publish anything.\n- Sign or accept a contract.\n')
       + '\n## Suppliers\n- Keeps the supplier DPA list in example-docs/suppliers.md.\n';
-    const next = { id: 'contracts', name: 'Contracts & Suppliers', parent: 'legal', remit: 'Supplier and customer contracts, DPAs and the supplier list. Drafts redlines; never signs.',
+    const next = { id: 'contracts', name: 'Procurement and Contracts Manager', parent: 'legal', remit: 'Supplier and customer contracts, DPAs and the supplier list. Drafts redlines; never signs.',
       scope: { kind: 'product', folder: `${HOME}/example-docs` }, status: 'active', model: null, effort: 'high',
       powers: { ...NONCODING, write: ['$workspace', '$scope'], tools: NONCODING.tools.filter((t) => t !== 'WebSearch'), bash: 'readonly' },
       duties: [{ id: 'supplier-dpa', title: 'Supplier DPA check', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 * *', catchUp: 'once' }, prompt: 'Check every supplier on the list has a signed DPA on file.', output: 'report' }],
       brief: after };
     const excess = computeExcess(positions, folders, 'example-co', next.powers, 'legal', { scope: next.scope, workspaceId: 'contracts' });
     const diff = editDiff(cur, next, { briefBefore: before, briefAfter: after, excess });
-    proposals.push({ id: 'p_5d1a', company: 'example-co', action: 'edit', title: 'Change Contracts', why: 'Supplier paperwork lives in example-docs now; Contracts should own it.',
+    proposals.push({ id: 'p_5d1a', company: 'example-co', action: 'edit', title: 'Change Contracts Manager', why: 'Supplier paperwork lives in example-docs now; Contracts Manager should own it.',
       draft: next, diff, excess, status: 'open', by: ceoBy, target: 'contracts', parent: 'legal', at: iso(now - 40 * MIN) });
   }
   {
     const dAt = iso(now - 2 * DAY + 4 * MIN);
     const p = positions.payroll;
-    proposals.push({ id: 'p_19aa', company: 'example-co', action: 'create', title: 'New position: Payroll Tax under Tax Specialist', why: 'Payroll questions need their own owner.',
+    proposals.push({ id: 'p_19aa', company: 'example-co', action: 'create', title: 'New position: Payroll Tax Specialist under Tax Specialist', why: 'Payroll questions need their own owner.',
       draft: { id: 'payroll', name: p.name, parent: 'tax', remit: p.remit, powers: NONCODING, duties: [], scope: { kind: 'company' }, model: null, effort: 'high', brief: plainBrief(p) },
       excess: [], status: 'approved', by: { kind: 'position', id: 'tax', sessionId: 's_tax_1' }, target: 'payroll', parent: 'tax', at: iso(now - 2 * DAY),
-      decidedAt: dAt, decision: { at: dAt, how: 'click', result: 'approved' }, decidedHow: 'click', result: 'Payroll Tax created under Tax Specialist' });
+      decidedAt: dAt, decision: { at: dAt, how: 'click', result: 'approved' }, decidedHow: 'click', result: 'Payroll Tax Specialist created under Tax Specialist' });
   }
   {
     const dAt = iso(now - 4 * DAY + 9 * MIN);
     const cur = positions.marketing;
     const next = { ...clone(cur), remit: 'Release posts, landing page copy and the monthly newsletter. Posts releases itself.' };
     delete next.createdAt; delete next.version;
-    proposals.push({ id: 'p_0b7d', company: 'example-co', action: 'edit', title: 'Change Marketing', why: 'Release posts could go out without waiting for you.',
+    proposals.push({ id: 'p_0b7d', company: 'example-co', action: 'edit', title: 'Change Marketing Manager', why: 'Release posts could go out without waiting for you.',
       draft: next, diff: editDiff(cur, next, {}), status: 'declined', by: ceoBy, target: 'marketing', parent: null, at: iso(now - 4 * DAY),
       decidedAt: dAt, decision: { at: dAt, how: 'click', result: 'declined', note: 'Keep it drafts only.' }, decidedHow: 'click', note: 'Keep it drafts only.' });
   }
   const inbox = [
     { at: iso(now - 3 * HOUR), id: 'n_31', position: 'finance', kind: 'duty-report', title: 'Weekly spend report', text: 'Spend is flat week over week. Two subscriptions renew next week: the design tool and the error tracker. The design tool has one unused seat.', files: ['work/drafts/weekly-spend.md'], needsOwen: true },
-    { at: iso(now - 1 * DAY), id: 'n_30', position: 'legal', kind: 'flag', title: 'Brief edited by you', text: 'Legal\'s brief changed: "How it reports" now asks for the file and line first.', needsOwen: false },
-    { at: iso(now - 2 * DAY), id: 'n_29', position: 'payroll', kind: 'proposal', title: 'Payroll Tax created under Tax Specialist', text: 'Approved by your click.', proposal: 'p_19aa', needsOwen: false },
+    { at: iso(now - 1 * DAY), id: 'n_30', position: 'legal', kind: 'flag', title: 'Brief edited by you', text: 'General Counsel\'s brief changed: "How it reports" now asks for the file and line first.', needsOwen: false },
+    { at: iso(now - 2 * DAY), id: 'n_29', position: 'payroll', kind: 'proposal', title: 'Payroll Tax Specialist created under Tax Specialist', text: 'Approved by your click.', proposal: 'p_19aa', needsOwen: false },
     { at: iso(now - 5 * DAY), id: 'n_28', position: 'qa', kind: 'flag', title: 'One failing test before release', text: 'sign-up.test.js fails on a slow machine.', needsOwen: true, dismissedAt: iso(now - 4 * DAY) },
   ];
   const inboxes = { 'example-co': inbox, 'harbor-books': [] };
@@ -395,12 +395,12 @@ function importedCards(now) {
   return [
     { id: 'p_c0a1', company: null, action: 'company', title: 'New company: Example Studio', why: 'A second business, with its own site and orders.',
       draft: { id: cid, name: 'Example Studio', folders: [`${HOME}/example-studio-site`] }, status: 'open', by, target: cid, at: iso(now - 10 * MIN), ref: 'company' },
-    job(1, 'ops', { pid: 'p_c0a2', id: 'operations', name: 'Operations', parent: null, remit: 'Orders, suppliers and the weekly numbers.', why: 'Someone has to own the weekly numbers.' }),
-    job(2, 'books', { pid: 'p_c0a3', id: 'bookkeeping', name: 'Bookkeeping', parent: 'operations', parentName: 'Operations', remit: 'Invoices, receipts and the monthly close.', why: 'Receipts pile up every month.',
+    job(1, 'ops', { pid: 'p_c0a2', id: 'operations', name: 'Operations Manager', parent: null, remit: 'Orders, suppliers and the weekly numbers.', why: 'Someone has to own the weekly numbers.' }),
+    job(2, 'books', { pid: 'p_c0a3', id: 'bookkeeping', name: 'Bookkeeper', parent: 'operations', parentName: 'Operations Manager', remit: 'Invoices, receipts and the monthly close.', why: 'Receipts pile up every month.',
       duties: [{ id: 'monthly-close', title: 'Monthly close', enabled: true, trigger: { kind: 'schedule', cron: '0 9 1 * *', catchUp: 'once' }, prompt: 'Close last month.', output: 'report' }] }),
-    job(3, 'web', { pid: 'p_c0a4', id: 'web-copy', name: 'Web Copy', parent: null, remit: 'Copy for the studio site. Drafts only.', why: 'The site copy is out of date.',
+    job(3, 'web', { pid: 'p_c0a4', id: 'web-copy', name: 'Copywriter', parent: null, remit: 'Copy for the studio site. Drafts only.', why: 'The site copy is out of date.',
       powers: { ...NC, read: [...NC.read, `${HOME}/old-studio-site`], bash: 'readonly' } }),
-    job(4, 'support', { pid: 'p_c0a5', id: 'customer-care', name: 'Customer Care', parent: 'operations', parentName: 'Operations', remit: 'Answers customer emails, from drafts you approve.', why: 'Customer emails need a first draft.' }),
+    job(4, 'support', { pid: 'p_c0a5', id: 'customer-care', name: 'Customer Support Specialist', parent: 'operations', parentName: 'Operations Manager', remit: 'Answers customer emails, from drafts you approve.', why: 'Customer emails need a first draft.' }),
   ];
 }
 
@@ -417,19 +417,19 @@ export function createMockTeam({ mode = null, now = Date.now(), emit = () => {},
   }
   if (mode === 'imported') { D.companies = []; D.proposals = importedCards(now); D.access = []; D.crosstalk = []; }
   if (mode === 'deep') {
-    // depth 4 and 5 under Payroll Tax (legal > tax > payroll > contractor-wh > eu-contractors)
+    // depth 4 and 5 under Payroll Tax Specialist (legal > tax > payroll > contractor-wh > eu-contractors)
     const extra = {
-      'contractor-wh': { id: 'contractor-wh', name: 'Contractor Withholding', parent: 'payroll', remit: 'Withholding for contractors paid from another country, per payout.',
+      'contractor-wh': { id: 'contractor-wh', name: 'Contractor Withholding Specialist', parent: 'payroll', remit: 'Withholding for contractors paid from another country, per payout.',
         status: 'active', model: null, effort: 'high', scope: { kind: 'company' }, powers: NONCODING, duties: [], createdAt: iso(now - 4 * DAY), version: 1 },
-      'eu-contractors': { id: 'eu-contractors', name: 'EU Contractors', parent: 'contractor-wh', remit: 'Reverse charge and withholding for contractors inside the EU.',
+      'eu-contractors': { id: 'eu-contractors', name: 'EU Contractor Tax Analyst', parent: 'contractor-wh', remit: 'Reverse charge and withholding for contractors inside the EU.',
         status: 'active', model: null, effort: 'high', scope: { kind: 'company' }, powers: NONCODING, duties: [], createdAt: iso(now - 1 * DAY), version: 1 },
     };
-    // re-insert in place (D.defs holds this same object), so the new rows sit right after Payroll Tax
+    // re-insert in place (D.defs holds this same object), so the new rows sit right after Payroll Tax Specialist
     const order = Object.entries(D.positions);
     for (const [id] of order) delete D.positions[id];
     for (const [id, p] of order) { D.positions[id] = p; if (id === 'payroll') Object.assign(D.positions, extra); }
-    D.live['contractor-wh'] = { status: 'idle', lastActivity: { at: now - 3 * HOUR, text: 'answered Payroll Tax' } };
-    D.live['eu-contractors'] = { status: 'working', lastActivity: { at: now - 2 * MIN, text: 'answering Contractor Withholding' } };
+    D.live['contractor-wh'] = { status: 'idle', lastActivity: { at: now - 3 * HOUR, text: 'answered Payroll Tax Specialist' } };
+    D.live['eu-contractors'] = { status: 'working', lastActivity: { at: now - 2 * MIN, text: 'answering Contractor Withholding Specialist' } };
   }
   let conflictOnce = mode === 'conflict';
   let seq = 0;

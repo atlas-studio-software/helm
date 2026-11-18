@@ -217,7 +217,7 @@ function Group({ g, list, forceOpen }) {
 }
 
 // Team (Positions, spec 10.1): position chats that are working, waiting, or were used in the last hour, as normal
-// session rows titled with the position ("Legal", sub-line "Example Co · Answering CEO"). A sibling of Elsewhere
+// session rows titled with the position ("General Counsel", sub-line "Example Co · Answering CEO"). A sibling of Elsewhere
 // and Past that collapses like them; the people icon opens the Team view, where every position and chat is listed.
 // CEO sessions are normal sessions in their project groups. Hidden while no position chat is live or recent.
 function TeamSection({ list, forceOpen }) {

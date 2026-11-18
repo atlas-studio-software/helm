@@ -247,7 +247,7 @@ line; use the send button.
 
 ## Positions (AI staff for a company)
 
-Positions give a company a staff of Claude sessions, each with one job (Legal, Marketing, Finance…), arranged as
+Positions give a company a staff of Claude sessions, each with one job (General Counsel, Marketing Manager, Controller…), arranged as
 an org tree under the CEO. It is off until you turn it on.
 
 ### Turn it on
@@ -274,7 +274,7 @@ an org tree under the CEO. It is off until you turn it on.
 - A position gets none of your own setup: no global or project CLAUDE.md, no memory files, no mods, plugins,
   skills or hooks, none of your MCP servers and no claude.ai connectors. It knows only its brief, its notebook,
   Helm's house rules and the questions it is asked.
-- A position can have its own reports (Legal → Tax Specialist → …), down to 5 levels under the CEO. A manager has
+- A position can have its own reports (General Counsel → Tax Specialist → …), down to 5 levels under the CEO. A manager has
   at most 10 direct reports, and a company at most 30 positions.
 
 ### Ask a position through the CEO
@@ -283,15 +283,15 @@ an org tree under the CEO. It is off until you turn it on.
   it needs and any files it hands over. Handed files are read-only, and only for that question.
 - The position sees only that question, never the rest of the CEO's chat. The CEO gets back only the answer, never
   the position's chat or notebook.
-- The chain of command is real: the CEO asks only its direct reports. If Legal needs Tax Specialist, Legal asks it,
+- The chain of command is real: the CEO asks only its direct reports. If General Counsel needs Tax Specialist, General Counsel asks it,
   and each level passes its own answer up.
-- The CEO's chat shows an **Ask card**: who is being asked, what is happening now ("queued", "Legal is working ·
-  2m", "Legal asked Tax Specialist · 1m"), **Open Legal** and **Cancel question**. When the answer comes, the card
+- The CEO's chat shows an **Ask card**: who is being asked, what is happening now ("queued", "General Counsel is working ·
+  2m", "General Counsel asked Tax Specialist · 1m"), **Open General Counsel** and **Cancel question**. When the answer comes, the card
   folds to one line with the answer under it.
 - The CEO waits up to 5 minutes. A slower answer comes back as "pending" first; the answer then arrives in the same
   chat as a Helm message, and the CEO passes it on to you.
 - If you press **Stop** while the CEO waits, the question stays open. When the answer comes, an answer card says
-  "Legal answered after you stopped", with **Show** and **Send to CEO**.
+  "General Counsel answered after you stopped", with **Show** and **Send to CEO**.
 - A question still open 2 hours after it was asked expires. Questions survive a Helm restart; the answer then
   arrives as a late answer.
 - Limits stop runaway loops: 20 questions an hour from one position, 200 a day per company, at most 8 questions in
@@ -307,7 +307,7 @@ an org tree under the CEO. It is off until you turn it on.
   the tab (you sent or typed something there in the last 90 seconds while it was on screen). It waits until you
   leave the tab alone, and the asker's Ask card shows it as queued meanwhile. A question never cuts into a reply
   that is running.
-- Questions show as "Asked by CEO" (or "Asked by Legal") bubbles on the left, never as yours. Duty runs show as
+- Questions show as "Asked by CEO" (or "Asked by General Counsel") bubbles on the left, never as yours. Duty runs show as
   "Duty · …".
 - A position never opens a tab by itself when a question arrives.
 
@@ -392,7 +392,7 @@ an org tree under the CEO. It is off until you turn it on.
   tools, Bash (off, read-only or on) and whether it may use agents. The Team view's **Powers** section shows them in
   plain words.
 - A report never has more than its manager. Narrowing a manager narrows everyone under it at once; the Team view
-  marks those powers "limited by Legal".
+  marks those powers "limited by General Counsel".
 - Coding positions work in their own git worktree, so their edits never touch your live folder. Merging is yours,
   with the normal worktree merge.
 - When a position needs more, it asks. An **access card** appears in its chat (and as a chip on its row, a toast
@@ -400,7 +400,7 @@ an org tree under the CEO. It is off until you turn it on.
   - **Approve once**: for the current reply only (for a duty, the whole run; for a question, until it is
     answered).
   - **Approve always**: saved into the position's definition. If that goes beyond its manager, the button reads
-    "Approve always (also widens Legal)" and widens those managers too.
+    "Approve always (also widens General Counsel)" and widens those managers too.
   - **Deny**: with an optional note. The position carries on without it and may ask again later.
   - No answer in 30 minutes counts as no; the position carries on and notes it as an open item.
 - Every request comes to you. A manager can never grant its reports anything.
@@ -412,7 +412,11 @@ an org tree under the CEO. It is off until you turn it on.
 - When a topic (legal, money, marketing, support…) comes up a second or third time and no position covers it, the
   CEO suggests one in plain words. It proposes only once you want it. A manager can likewise propose a report under
   itself. A session that is in no company can propose a new company.
-- A proposal is a **proposal card**: the title ("New position: Tax Specialist under Legal"), remit, scope, powers
+- A position's **name is a real job title**: what that person would be called at a real company (General Counsel,
+  Controller, Marketing Manager, Business Development Representative, Tax Specialist), never a topic or department
+  label ("Legal", "Money & Paperwork", "Leads & Outreach"). The remit says what it covers. The CEO and managers are
+  told this, and a card whose name looks like a bare department label carries a note saying so.
+- A proposal is a **proposal card**: the title ("New position: Tax Specialist under General Counsel"), remit, scope, powers
   (anything beyond the manager in red: it is cut when you approve), duties in words, the brief (folded) and the
   files it would read first. A change shows what is added and removed.
   - **Approve**: Helm writes the files.
@@ -448,7 +452,7 @@ node tools/team-import-proposals.js <file.json> [--dry-run] [--port N] [--user-d
   `brief`…; `edit` and `retire` need the position's `id`). An item may also carry a `ref` (a label for the output),
   a `status` (only `pending` items load) and a `notebook_md` to start a new position's notebook with.
 - `--dry-run` only reads the file; Helm need not be running. It prints `company: <id>`, one `ok` line per item that
-  would load (`ok    legal: create legal "Legal" parent=(CEO)`), one `skip` line with the reason for each item that
+  would load (`ok    legal: create legal "General Counsel" parent=(CEO)`), one `skip` line with the reason for each item that
   would not, and last `team-import: N valid, M skipped`.
 - Without `--dry-run`, Helm must be running with Positions on. The tool reads Helm's token from its user data folder
   (`%APPDATA%\Helm` unless you pass `--user-data`) and talks to it on port 4871 (or `--port`). It prints one `open`
@@ -466,10 +470,10 @@ there) only while the desktop window isn't focused and the Helm page isn't open 
 
 | When | Title | Text |
 | --- | --- | --- |
-| A position asks for access | "Legal asks for read access" (or write access, "the WebFetch tool", "Bash …") | what it asks for and why |
-| A position wants to do something outward | "Legal asks to run an outward action" | the command, then "Leaves the machine: …" |
-| A position proposes a report or a change | "Legal proposes a new report: Tax Specialist" ("… retiring Tax Specialist", "… a change to Tax Specialist") | the proposal's why |
-| A duty report needs you | "Legal needs you" | the start of the report |
+| A position asks for access | "General Counsel asks for read access" (or write access, "the WebFetch tool", "Bash …") | what it asks for and why |
+| A position wants to do something outward | "General Counsel asks to run an outward action" | the command, then "Leaves the machine: …" |
+| A position proposes a report or a change | "General Counsel proposes a new report: Tax Specialist" ("… retiring Tax Specialist", "… a change to Tax Specialist") | the proposal's why |
+| A duty report needs you | "General Counsel needs you" | the start of the report |
 
 Proposals from the CEO and imported ones don't push; they wait in the CEO chat and the Team view.
 

@@ -1,4 +1,4 @@
-# Legal
+# General Counsel
 
 You look after the legal text of Northwind Goods: the shop's terms, privacy notice and cookie notice, and the app's store listing text.
 

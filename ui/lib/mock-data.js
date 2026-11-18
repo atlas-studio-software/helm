@@ -81,17 +81,17 @@ export const sessions = [
   { ...base, id: 's_stall', claudeSessionId: '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c44', title: 'Release notes for v1.3.2', cwd: 'C:\\Users\\you\\code\\storefront',
     project: 'storefront', status: 'working', createdAt: now - 50 * min, updatedAt: now - 12 * min, costUsd: 0.88, context: { usedTokens: 132000, windowTokens: 1000000, percent: 13.2 },
     activity: 'Running npm run build', turnStartedAt: now - 19 * min, unread: 0, agentsRunning: 1, agentsQuiet: 1, stalledSince: now - 12 * min - 20_000 },
-  // lane positions (PROTOCOL "Positions"): a CEO session (its cwd is in Example Co's folder) waiting on Legal, and
-  // Legal's current chat (chat 2) answering it while it asks its own report, Tax Specialist.
+  // lane positions (PROTOCOL "Positions"): a CEO session (its cwd is in Example Co's folder) waiting on General Counsel, and
+  // General Counsel's current chat (chat 2) answering it while it asks its own report, Tax Specialist.
   { ...base, id: 's_ceo', claudeSessionId: '7c8d9e0f-0000-4a1b-8c2d-3e4f5a6b7c10', title: 'EU checkout launch check', cwd: 'C:\\Users\\you\\example-site',
     project: 'example-site', status: 'working', createdAt: now - 15 * min, updatedAt: now - 20_000, costUsd: 0.37, context: { usedTokens: 58000, windowTokens: 1000000, percent: 5.8 },
-    activity: 'Waiting for Legal', turnStartedAt: now - 4 * min, unread: 0,
+    activity: 'Waiting for General Counsel', turnStartedAt: now - 4 * min, unread: 0,
     team: { company: 'example-co', companyName: 'Example Co' } },
-  { ...base, id: 's_pos_legal', claudeSessionId: '7c8d9e0f-0000-4a1b-8c2d-3e4f5a6b7c11', title: 'Legal', effort: 'high',
+  { ...base, id: 's_pos_legal', claudeSessionId: '7c8d9e0f-0000-4a1b-8c2d-3e4f5a6b7c11', title: 'General Counsel', effort: 'high',
     cwd: 'C:\\Users\\you\\helm-team\\example-co\\positions\\legal', project: 'legal', status: 'working', createdAt: now - 6 * 24 * 60 * min,
     updatedAt: now - 30_000, costUsd: 0.52, context: { usedTokens: 71000, windowTokens: 1000000, percent: 7.1 },
     activity: 'Answering CEO · waiting for Tax Specialist', turnStartedAt: now - 3 * min, unread: 0,
-    position: { company: 'example-co', companyName: 'Example Co', id: 'legal', name: 'Legal', parent: null, chat: 2 } },
+    position: { company: 'example-co', companyName: 'Example Co', id: 'legal', name: 'General Counsel', parent: null, chat: 2 } },
 ];
 
 // Deck summary (lane deck, PROTOCOL "Deck summary"): lastText = tail of the latest main-thread reply,
@@ -108,7 +108,7 @@ const deckSummary = {
       detail: 'C:\\Users\\you\\Documents\\reports\\bundle-size-report.md', count: 1 } },
   s_sim: { lastText: 'Before I fan this out: the fit splits cleanly into three lanes (loader, rate sweep, comparison plots).',
     pendingRequest: null },   // filled from the s_sim items below by pendingSummary()
-  s_ceo: { lastText: 'Legal covers both the privacy text and, through Tax Specialist, VAT. Asking Legal now.', pendingRequest: null },
+  s_ceo: { lastText: 'General Counsel covers both the privacy text and, through Tax Specialist, VAT. Asking General Counsel now.', pendingRequest: null },
   s_pos_legal: { lastText: 'The privacy part I can answer from the page itself. VAT is Tax Specialist\'s area, so I am asking them.', pendingRequest: null },
 };
 for (const s of sessions) Object.assign(s, deckSummary[s.id] || { lastText: null, pendingRequest: null });
@@ -146,11 +146,11 @@ export const sessionsOrg = [
     status: 'idle', createdAt: now - 6 * 24 * 60 * min, updatedAt: now - 5 * 24 * 60 * min, costUsd: 0.4, context: null, activity: null, turnStartedAt: null, unread: 0, archived: false },
   { ...base, id: 's_empty', claudeSessionId: null, title: 'New session', cwd: 'C:\\Users\\you\\code\\api-server', project: 'api-server',
     status: 'closed', createdAt: now - 2 * 24 * 60 * min, updatedAt: now - 2 * 24 * 60 * min, costUsd: 0, context: null, activity: null, turnStartedAt: null, unread: 0, archived: false },
-  // lane positions: Legal's first chat, ended when it was full (chats.json endReason "full"); read-only, links to chat 2
-  { ...base, id: 's_pos_legal_1', claudeSessionId: '7c8d9e0f-0000-4a1b-8c2d-3e4f5a6b7c12', title: 'Legal', effort: 'high',
+  // lane positions: General Counsel's first chat, ended when it was full (chats.json endReason "full"); read-only, links to chat 2
+  { ...base, id: 's_pos_legal_1', claudeSessionId: '7c8d9e0f-0000-4a1b-8c2d-3e4f5a6b7c12', title: 'General Counsel', effort: 'high',
     cwd: 'C:\\Users\\you\\helm-team\\example-co\\positions\\legal', project: 'legal', status: 'closed', createdAt: now - 20 * 24 * 60 * min,
     updatedAt: now - 6 * 24 * 60 * min, costUsd: 4.1, context: { usedTokens: 331000, windowTokens: 1000000, percent: 33.1 }, activity: null, turnStartedAt: null,
-    unread: 0, archived: true, position: { company: 'example-co', companyName: 'Example Co', id: 'legal', name: 'Legal', parent: null, chat: 1, ended: true } },
+    unread: 0, archived: true, position: { company: 'example-co', companyName: 'Example Co', id: 'legal', name: 'General Counsel', parent: null, chat: 1, ended: true } },
 ];
 
 const editOld = `  if (!session) {\n    return res.redirect('/login');\n  }`;
@@ -279,23 +279,23 @@ export const items = {
         { label: 'Free rein', description: 'Agents spawn as many sub-agents as they judge useful, at any depth.' },
       ] }] },
   ],
-  // lane positions: the CEO's Ask card (a live chain CEO -> Legal -> Tax Specialist)
+  // lane positions: the CEO's Ask card (a live chain CEO -> General Counsel -> Tax Specialist)
   s_ceo: [
     { id: 'ceo1', type: 'user', ts: now - 4 * min, text: 'Before we open checkout to EU customers: do we need to charge VAT, and does the privacy page cover the payment processor?', attachments: [] },
-    { id: 'ceo2', type: 'assistant', ts: now - 4 * min + 8_000, streaming: false, model: 'claude-opus-5-5', text: 'Legal covers both the privacy text and, through Tax Specialist, VAT. Asking Legal now.' },
+    { id: 'ceo2', type: 'assistant', ts: now - 4 * min + 8_000, streaming: false, model: 'claude-opus-5-5', text: 'General Counsel covers both the privacy text and, through Tax Specialist, VAT. Asking General Counsel now.' },
     { id: 'ceo3', type: 'tool', ts: now - 4 * min + 10_000, toolUseId: 'toolu_team1', name: 'mcp__team__team_ask', status: 'running', startedAt: now - 4 * min + 10_000,
       input: { to: 'legal', question: 'We are opening checkout to EU customers next week. 1) Do we need to charge VAT on these sales, and from when? 2) Does the privacy page cover the payment processor that now receives card details and billing addresses?',
         handed: ['C:\\Users\\you\\example-site\\privacy.html', 'C:\\Users\\you\\example-site\\docs\\checkout-eu.md'] }, result: '',
-      team: { ticket: 't_4f1e', state: 'delivered', detail: 'Legal asked Tax Specialist · 1m',
+      team: { ticket: 't_4f1e', state: 'delivered', detail: 'General Counsel asked Tax Specialist · 1m',
         chain: [
-          { ticket: 't_4f1e', to: 'legal', name: 'Legal', state: 'delivered', sinceMs: 3 * min + 50_000 },
+          { ticket: 't_4f1e', to: 'legal', name: 'General Counsel', state: 'delivered', sinceMs: 3 * min + 50_000 },
           { ticket: 't_5a2b', parentTicket: 't_4f1e', to: 'tax', name: 'Tax Specialist', state: 'delivered', sinceMs: 70_000 },
         ] } },
   ],
-  // lane positions: Legal's chat 2 (seed line, Asked-by bubble, notebook entry, its own ask to its report)
+  // lane positions: General Counsel's chat 2 (seed line, Asked-by bubble, notebook entry, its own ask to its report)
   s_pos_legal: [
     { id: 'pl1', type: 'user', ts: now - 3 * min - 50_000, origin: 'seed', seed: { fromChat: 1, handoff: true }, attachments: [],
-      text: '<position-seed>\n# Legal · notebook\n## Decisions\n- 11-02: cookie banner only for analytics cookies (owner)\n## Facts\n- Payment processor: card data never touches our servers (docs/checkout.md, 11-01)\n## Open items\n- [ ] Re-check terms page after the refund change\n## Log\n- 11-10: reviewed the new terms draft\n\nHandoff from chat 1: Done: terms review. In progress: none. Waiting on: none. Next: refund wording.\n</position-seed>' },
+      text: '<position-seed>\n# General Counsel · notebook\n## Decisions\n- 11-02: cookie banner only for analytics cookies (owner)\n## Facts\n- Payment processor: card data never touches our servers (docs/checkout.md, 11-01)\n## Open items\n- [ ] Re-check terms page after the refund change\n## Log\n- 11-10: reviewed the new terms draft\n\nHandoff from chat 1: Done: terms review. In progress: none. Waiting on: none. Next: refund wording.\n</position-seed>' },
     { id: 'pl2', type: 'user', ts: now - 3 * min - 50_000, origin: 'ask', attachments: [],
       ask: { ticket: 't_4f1e', from: { kind: 'ceo', name: 'CEO' }, kind: 'report',
         handed: ['C:\\Users\\you\\example-site\\privacy.html', 'C:\\Users\\you\\example-site\\docs\\checkout-eu.md'] },

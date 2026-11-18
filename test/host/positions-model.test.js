@@ -20,13 +20,13 @@ const at = (d, h, min = 0, mo = 10, y = 2026) => new Date(y, mo, d, h, min).getT
 // legal > tax > payroll > deep4 > deep5 (depth 5, the cap), legal > contracts, marketing
 const R = (id, name, parent, extra = {}) => ({ id, name, parent, remit: '', status: 'active', depth: 0, pending: { requests: 0, proposals: 0 }, ...extra });
 const TREE = [
-  R('legal', 'Legal', null),
+  R('legal', 'General Counsel', null),
   R('tax', 'Tax Specialist', 'legal', { depth: 9 }),   // a wrong stored depth is only a hint
-  R('payroll', 'Payroll Tax', 'tax'),
+  R('payroll', 'Payroll Tax Specialist', 'tax'),
   R('deep4', 'Deep Four', 'payroll'),
   R('deep5', 'Deep Five', 'deep4'),
-  R('contracts', 'Contracts', 'legal'),
-  R('marketing', 'Marketing', null),
+  R('contracts', 'Contracts Manager', 'legal'),
+  R('marketing', 'Marketing Manager', null),
 ];
 const byId = (rows) => Object.fromEntries(rows.map((r) => [r.id, r]));
 
@@ -98,7 +98,7 @@ test('visibleRows: indent 16 px a level on desktop, 12 px on phone; phone stops 
   assert.ok(Object.values(desk).every((r) => r.crumb === null), 'desktop never has a crumb');
   const phone = byId(visibleRows(TREE, {}, { phone: true }));
   assert.deepEqual(['legal', 'tax', 'payroll', 'deep4', 'deep5'].map((id) => phone[id].indent), [12, 24, 36, 36, 36]);
-  assert.deepEqual(['legal', 'tax', 'payroll', 'deep4', 'deep5'].map((id) => phone[id].crumb), [null, null, null, 'Payroll Tax', 'Deep Four']);
+  assert.deepEqual(['legal', 'tax', 'payroll', 'deep4', 'deep5'].map((id) => phone[id].crumb), [null, null, null, 'Payroll Tax Specialist', 'Deep Four']);
   assert.equal(phone[CEO].indent, 0);
 });
 
@@ -259,7 +259,7 @@ const TAX = {
 const notes = (rows) => rows.map((r) => (r.items ? r.items.map((i) => i.limitNote) : r.limitNote));
 
 test('powerRows: engine limits -> limitedBy (names) + limitNote; tokens in words; nothing else marked', () => {
-  const names = { legal: 'Legal', qa: 'App QA' };
+  const names = { legal: 'General Counsel', qa: 'QA Engineer' };
   const rows = byId(powerRows(TAX, names, { companyFolders: FOLDERS }).map((r) => ({ ...r, id: r.key })));
   assert.deepEqual(Object.keys(rows), ['read', 'write', 'tools', 'bash', 'agents', 'worktree']);
   assert.deepEqual(rows.read.items.map((i) => [i.label, i.mono, i.limitedBy, i.limitNote, i.partly]), [
@@ -268,8 +268,8 @@ test('powerRows: engine limits -> limitedBy (names) + limitNote; tokens in words
   assert.equal(rows.read.items[0].title, WS, 'a token\'s title lists the folders it stands for');
   assert.equal(rows.read.items[1].title, FOLDERS.join('\n'));
   assert.deepEqual(rows.write.items.map((i) => [i.label, i.limitedBy]), [['Its workspace', null]]);
-  assert.deepEqual(rows.tools.items.map((i) => [i.value, i.limitedBy, i.limitNote]), [['Read', null, null], ['WebFetch', null, null], ['NotebookEdit', 'Legal', 'limited by Legal']]);
-  assert.deepEqual([rows.bash.text, rows.bash.limitedBy, rows.bash.limitNote, rows.bash.title, rows.bash.label], ['Off', 'Legal', 'limited by Legal', 'Listed: Read-only commands', 'Bash']);
+  assert.deepEqual(rows.tools.items.map((i) => [i.value, i.limitedBy, i.limitNote]), [['Read', null, null], ['WebFetch', null, null], ['NotebookEdit', 'General Counsel', 'limited by General Counsel']]);
+  assert.deepEqual([rows.bash.text, rows.bash.limitedBy, rows.bash.limitNote, rows.bash.title, rows.bash.label], ['Off', 'General Counsel', 'limited by General Counsel', 'Listed: Read-only commands', 'Bash']);
   assert.deepEqual([rows.agents.text, rows.agents.limitedBy, rows.agents.label], ['No subagents', null, 'Agents']);
   assert.deepEqual([rows.worktree.text, rows.worktree.limitedBy], ['No worktree', null]);
 
@@ -288,12 +288,12 @@ test('powerRows: engine limits -> limitedBy (names) + limitNote; tokens in words
   };
   const r = byId(powerRows(pos, names, { companyFolders: FOLDERS }).map((x) => ({ ...x, id: x.key })));
   assert.deepEqual(r.read.items.map((i) => [i.label, i.limitNote, !!i.partly]), [
-    ['Company folders', 'limited by App QA', true], ['~/notes', 'outside the company folders', false], ['D:/elsewhere', 'limited by Legal', false]]);
-  assert.deepEqual(r.write.items.map((i) => [i.label, i.limitNote, i.partly]), [['Its scope: example-app', 'limited by Legal', false]]);
+    ['Company folders', 'limited by QA Engineer', true], ['~/notes', 'outside the company folders', false], ['D:/elsewhere', 'limited by General Counsel', false]]);
+  assert.deepEqual(r.write.items.map((i) => [i.label, i.limitNote, i.partly]), [['Its scope: example-app', 'limited by General Counsel', false]]);
   assert.match(r.write.items[0].title, /Keeps only: C:\/Users\/you\/example-app\/docs/);
-  assert.equal(r.tools.items[1].limitNote, 'limited by Legal');
-  assert.deepEqual([r.bash.text, r.bash.limitNote], ['Read-only commands', 'limited by App QA']);
-  assert.deepEqual([r.agents.text, r.agents.limitNote, r.agents.title], ['No subagents', 'limited by Legal', 'Listed: May use subagents']);
+  assert.equal(r.tools.items[1].limitNote, 'limited by General Counsel');
+  assert.deepEqual([r.bash.text, r.bash.limitNote], ['Read-only commands', 'limited by QA Engineer']);
+  assert.deepEqual([r.agents.text, r.agents.limitNote, r.agents.title], ['No subagents', 'limited by General Counsel', 'Listed: May use subagents']);
   assert.deepEqual([r.worktree.text, r.worktree.limitNote], ['No worktree', 'outside the company folders']);
 
   // no effective block: own powers as is, nothing limited
@@ -394,19 +394,19 @@ test('foldCrosstalk: idempotent on already-folded entries, including nested chil
 });
 
 test('crosstalkLine: names, live tickets show elapsed time, terminal ones tookMs', () => {
-  const names = { legal: 'Legal', tax: 'Tax Specialist', marketing: 'Marketing' };
+  const names = { legal: 'General Counsel', tax: 'Tax Specialist', marketing: 'Marketing Manager' };
   const f = foldCrosstalk(RAW);
   const a1 = crosstalkLine(f[1], names, NOW);
-  assert.deepEqual(a1, { from: 'CEO', to: 'Legal', when: '11:44', q: 'Q1', state: 'answered', stateText: 'answered', tone: 'ok', took: '3m 40s', colleague: false });
+  assert.deepEqual(a1, { from: 'CEO', to: 'General Counsel', when: '11:44', q: 'Q1', state: 'answered', stateText: 'answered', tone: 'ok', took: '3m 40s', colleague: false });
   const a2 = crosstalkLine(f[1].children[0], names, NOW);
-  assert.deepEqual([a2.from, a2.to, a2.took], ['Legal', 'Tax Specialist', '1m']);
+  assert.deepEqual([a2.from, a2.to, a2.took], ['General Counsel', 'Tax Specialist', '1m']);
   const z1 = crosstalkLine(f[0], names, NOW);
-  assert.deepEqual([z1.from, z1.to, z1.state, z1.tone, z1.took], ['You', 'Marketing', 'asked', 'live', '1m']);
+  assert.deepEqual([z1.from, z1.to, z1.state, z1.tone, z1.took], ['You', 'Marketing Manager', 'asked', 'live', '1m']);
   assert.equal(crosstalkLine(f[1].children[1], names, NOW).took, '13m', 'live: elapsed since asked');
   assert.equal(crosstalkLine(f[2], names, NOW).colleague, true);
   assert.equal(crosstalkLine(f[2], names, NOW).took, '1m 35s');
   const delivered = crosstalkLine({ askedAt: NOW - 30_000, state: 'delivered', to: 'nobody', from: 'legal' }, names, NOW);
-  assert.deepEqual([delivered.from, delivered.to, delivered.stateText, delivered.tone, delivered.took], ['Legal', 'nobody', 'answering', 'live', '30s']);
+  assert.deepEqual([delivered.from, delivered.to, delivered.stateText, delivered.tone, delivered.took], ['General Counsel', 'nobody', 'answering', 'live', '30s']);
   assert.equal(crosstalkLine({ state: 'refused', tookMs: 5000 }, names, NOW).tone, 'danger');
   assert.equal(crosstalkLine({ state: 'expired' }, names, NOW).took, '');
   assert.equal(crosstalkLine({ askedAt: at(15, 9), state: 'answered', question: 'x'.repeat(200) }, names, NOW).when, 'Nov 15');
@@ -414,7 +414,7 @@ test('crosstalkLine: names, live tickets show elapsed time, terminal ones tookMs
 });
 
 // ---------------------------------------------------------------- notebook
-const NB = ['# Legal · notebook', '## Open items', '- [ ] one', '- [x] two', '```', '- [ ] fenced, not a task', '```',
+const NB = ['# General Counsel · notebook', '## Open items', '- [ ] one', '- [x] two', '```', '- [ ] fenced, not a task', '```',
   'Some text', '  * [X] three', '~~~md', '```', '- [ ] still fenced', '~~~', '+ [ ] four'].join('\n');
 
 test('parseNotebook: counts open/done, skips fenced task-looking lines, keeps markdown blocks between tasks', () => {
@@ -425,7 +425,7 @@ test('parseNotebook: counts open/done, skips fenced task-looking lines, keeps ma
   assert.deepEqual(tasks.map((t) => [t.line, t.checked, t.text, t.indent]), [[2, false, 'one', 0], [3, true, 'two', 0], [8, true, 'three', 2], [13, false, 'four', 0]]);
   const md = nb.blocks.filter((b) => b.kind === 'md');
   assert.deepEqual(md.map((b) => [b.line, b.text]), [
-    [0, '# Legal · notebook\n## Open items'],
+    [0, '# General Counsel · notebook\n## Open items'],
     [4, '```\n- [ ] fenced, not a task\n```\nSome text'],
     [9, '~~~md\n```\n- [ ] still fenced\n~~~'],
   ]);
@@ -477,14 +477,14 @@ test('chatRows: newest first, current = newest without endedAt, end reasons in w
 
 // ---------------------------------------------------------------- proposals + inbox
 test('proposalTitle: create / edit / retire / company', () => {
-  const names = { legal: 'Legal', contracts: 'Contracts' };
-  assert.equal(proposalTitle({ action: 'create', target: 'tax', parent: 'legal', draft: { name: 'Tax Specialist' } }, names), 'New position: Tax Specialist under Legal');
-  assert.equal(proposalTitle({ action: 'create', target: 'tax', draft: { name: 'Tax Specialist', parent: 'legal' } }, names), 'New position: Tax Specialist under Legal');
+  const names = { legal: 'General Counsel', contracts: 'Contracts Manager' };
+  assert.equal(proposalTitle({ action: 'create', target: 'tax', parent: 'legal', draft: { name: 'Tax Specialist' } }, names), 'New position: Tax Specialist under General Counsel');
+  assert.equal(proposalTitle({ action: 'create', target: 'tax', draft: { name: 'Tax Specialist', parent: 'legal' } }, names), 'New position: Tax Specialist under General Counsel');
   assert.equal(proposalTitle({ action: 'create', target: 'tax', parent: 'unknown' }, names), 'New position: tax under unknown');
   assert.equal(proposalTitle({ action: 'create', target: 'tax', draft: { name: 'Tax Specialist' } }, names), 'New position: Tax Specialist under the CEO');
-  assert.equal(proposalTitle({ action: 'edit', target: 'legal', draft: { name: 'Legal (new)' } }, names), 'Change Legal');
-  assert.equal(proposalTitle({ action: 'edit', target: 'qa', draft: { name: 'App QA' } }, names), 'Change App QA');
-  assert.equal(proposalTitle({ action: 'retire', target: 'contracts' }, names), 'Retire Contracts');
+  assert.equal(proposalTitle({ action: 'edit', target: 'legal', draft: { name: 'General Counsel (new)' } }, names), 'Change General Counsel');
+  assert.equal(proposalTitle({ action: 'edit', target: 'qa', draft: { name: 'QA Engineer' } }, names), 'Change QA Engineer');
+  assert.equal(proposalTitle({ action: 'retire', target: 'contracts' }, names), 'Retire Contracts Manager');
   assert.equal(proposalTitle({ action: 'retire', target: 'gone' }, names), 'Retire gone');
   assert.equal(proposalTitle({ action: 'company', draft: { name: 'Harbor Books' } }), 'New company: Harbor Books');
   assert.equal(proposalTitle({ action: 'company' }), 'New company:');
@@ -553,22 +553,22 @@ test('scopeWords / pathWords / parsePowerEntry / powerWords', () => {
 });
 
 test('excessRows / excessOf / excessHeadline: who cuts what, in words', () => {
-  const names = { 'payroll-tax': 'Payroll Tax', legal: 'Legal', operations: 'Operations' };
+  const names = { 'payroll-tax': 'Payroll Tax Specialist', legal: 'General Counsel', operations: 'Operations Manager' };
   const rows = M.excessRows([{ power: 'tools', value: 'WebFetch', by: 'payroll-tax' }, { power: 'bash', value: 'on', max: 'off', by: 'legal' },
     { power: 'bash', value: 'on', max: 'readonly', by: 'legal' }, { power: 'agents', value: true, by: 'legal' },
     { power: 'read', value: 'C:/Users/you/old', by: 'company', kept: ['C:/Users/you/old/docs'] }, { power: 'write', value: 'C:/x', by: null }, null, { value: 'no power' }], names);
   assert.deepEqual(rows.map((r) => [r.label, r.by, r.byName, r.why]), [
-    ['WebFetch', 'payroll-tax', 'Payroll Tax', 'Payroll Tax does not have it'], ['Bash on', 'legal', 'Legal', 'Legal has no Bash'],
-    ['Bash on', 'legal', 'Legal', 'Legal allows Bash read-only at most'], ['Subagents', 'legal', 'Legal', 'Legal does not have it'],
+    ['WebFetch', 'payroll-tax', 'Payroll Tax Specialist', 'Payroll Tax Specialist does not have it'], ['Bash on', 'legal', 'General Counsel', 'General Counsel has no Bash'],
+    ['Bash on', 'legal', 'General Counsel', 'General Counsel allows Bash read-only at most'], ['Subagents', 'legal', 'General Counsel', 'General Counsel does not have it'],
     ['Read C:/Users/you/old', 'company', null, 'outside the company folders'], ['Write C:/x', 'company', null, 'outside the company folders']]);
   assert.deepEqual([rows[4].kept, rows[4].mono, rows[1].max, rows[0].max], [['C:/Users/you/old/docs'], true, 'off', null]);
   const wait = M.excessRows([{ power: 'parent', value: 'operations', by: null }], (id) => names[id]);
-  assert.deepEqual([wait[0].waits, wait[0].label], [true, 'Its manager (Operations) is not approved yet']);
+  assert.deepEqual([wait[0].waits, wait[0].label], [true, 'Its manager (Operations Manager) is not approved yet']);
   assert.deepEqual(M.excessOf({ excess: [1], diff: { excess: [2] } }), [1]);
   assert.deepEqual(M.excessOf({ excess: [], diff: { excess: [2] } }), [2]);
   assert.deepEqual(M.excessOf({}), []);
   assert.deepEqual(M.excessOf(null), []);
-  assert.equal(M.excessHeadline(rows, 'State Payroll'), '6 powers go beyond its manager\'s, so State Payroll will not have them even if you approve');
+  assert.equal(M.excessHeadline(rows, 'State Payroll Analyst'), '6 powers go beyond its manager\'s, so State Payroll Analyst will not have them even if you approve');
   assert.equal(M.excessHeadline(rows.slice(0, 1)), 'One power goes beyond its manager\'s, so the position will not have it even if you approve');
   assert.equal(M.excessHeadline(wait), 'Its powers are checked once its manager is approved');
   assert.equal(M.excessHeadline([]), '');
@@ -585,11 +585,11 @@ test('briefDiffRows: the engine line diff with 2 lines of context, long same run
 });
 
 test('fieldChanges / proposalChanges / draftPowerChips', () => {
-  const names = { legal: 'Legal', tax: 'Tax Specialist' };
-  const diff = { name: { from: 'Payroll Tax', to: 'Payroll & Contractors' }, parent: { from: 'legal', to: null }, scope: { from: { kind: 'company' }, to: { kind: 'product', folder: 'C:/Users/you/app' } },
+  const names = { legal: 'General Counsel', tax: 'Tax Specialist' };
+  const diff = { name: { from: 'Payroll Tax Specialist', to: 'Contractor Payroll Specialist' }, parent: { from: 'legal', to: null }, scope: { from: { kind: 'company' }, to: { kind: 'product', folder: 'C:/Users/you/app' } },
     model: { from: null, to: 'claude-sonnet-5-5' }, effort: { from: 'high', to: null }, status: { from: 'active', to: 'paused' }, remit: 'not an object', brief: ' x' };
   assert.deepEqual(M.fieldChanges(diff, names).map((f) => [f.label, f.from, f.to, f.toTitle]), [
-    ['Name', 'Payroll Tax', 'Payroll & Contractors', undefined], ['Reports to', 'Legal', 'the CEO', undefined], ['Scope', 'The whole company', 'One product: app', 'C:/Users/you/app'],
+    ['Name', 'Payroll Tax Specialist', 'Contractor Payroll Specialist', undefined], ['Reports to', 'General Counsel', 'the CEO', undefined], ['Scope', 'The whole company', 'One product: app', 'C:/Users/you/app'],
     ['Model', 'Helm default', 'claude-sonnet-5-5', undefined], ['Effort', 'high', 'Helm default', undefined], ['Status', 'Active', 'Paused', undefined]]);
   assert.deepEqual(M.fieldChanges(null), []);
 
@@ -601,7 +601,7 @@ test('fieldChanges / proposalChanges / draftPowerChips', () => {
   assert.deepEqual(ch.powers.removed.map((x) => x.label), ['WebSearch']);
   assert.deepEqual([ch.duties.added.map((d) => d.title), ch.duties.changed.map((d) => d.title), ch.duties.removed.map((d) => d.title)], [['Quarterly'], ['Weekly (new)'], ['Old duty']]);
   assert.ok(ch.duties.added[0].trigger && !/^Schedule /.test(ch.duties.added[0].trigger));
-  assert.deepEqual([ch.brief.added, ch.excess.map((x) => x.why)], [1, ['Legal has no Bash']]);
+  assert.deepEqual([ch.brief.added, ch.excess.map((x) => x.why)], [1, ['General Counsel has no Bash']]);
   assert.deepEqual(M.proposalChanges({ action: 'create', draft: {} }), { fields: [], brief: null, powers: null, duties: null, excess: [] });
 
   const chips = M.draftPowerChips({ read: ['$workspace', 'C:/Users/you/old/'], write: ['$workspace'], tools: ['Read', 'WebFetch'], bash: 'on', agents: true, worktree: false },
@@ -613,10 +613,10 @@ test('fieldChanges / proposalChanges / draftPowerChips', () => {
 test('foldCrosstalk: team.crosstalk entries (folded, ISO askedAt / answeredAt) fold to epoch times and nest', () => {
   const isoT = (t) => new Date(t).toISOString();
   const entries = [
-    { ticket: 'c2', parentTicket: 'c1', chain: 'c1', from: { kind: 'position', id: 'legal', name: 'Legal' }, to: 'tax', toName: 'Tax Specialist', kind: 'report', state: 'answered', question: 'Q2',
+    { ticket: 'c2', parentTicket: 'c1', chain: 'c1', from: { kind: 'position', id: 'legal', name: 'General Counsel' }, to: 'tax', toName: 'Tax Specialist', kind: 'report', state: 'answered', question: 'Q2',
       askedAt: isoT(T - 15 * MIN), answer: 'A2', answeredAt: isoT(T - 14 * MIN), tookMs: 61_000, costUsd: 0.01 },
-    { ticket: 'c1', chain: 'c1', from: { kind: 'ceo', name: 'CEO' }, to: 'legal', toName: 'Legal', kind: 'report', state: 'delivered', question: 'Q1', askedAt: isoT(T - 16 * MIN) },
-    { ticket: 'c0', chain: 'c0', from: { kind: 'ceo', name: 'CEO' }, to: 'legal', toName: 'Legal', kind: 'report', state: 'answered', question: 'Q0', askedAt: isoT(T - 3 * DAY), answeredAt: isoT(T - 3 * DAY + 90_000) },
+    { ticket: 'c1', chain: 'c1', from: { kind: 'ceo', name: 'CEO' }, to: 'legal', toName: 'General Counsel', kind: 'report', state: 'delivered', question: 'Q1', askedAt: isoT(T - 16 * MIN) },
+    { ticket: 'c0', chain: 'c0', from: { kind: 'ceo', name: 'CEO' }, to: 'legal', toName: 'General Counsel', kind: 'report', state: 'answered', question: 'Q0', askedAt: isoT(T - 3 * DAY), answeredAt: isoT(T - 3 * DAY + 90_000) },
   ];
   const f = foldCrosstalk(entries);
   assert.deepEqual(f.map((e) => e.ticket), ['c1', 'c0']);
@@ -626,7 +626,7 @@ test('foldCrosstalk: team.crosstalk entries (folded, ISO askedAt / answeredAt) f
   assert.deepEqual([c0.doneAt, c0.tookMs], [T - 3 * DAY + 90_000, 90_000], 'tookMs from the times when the entry has none');
   assert.deepEqual(foldCrosstalk(f), f, 'idempotent');
   const line = crosstalkLine(c1.children[0], { tax: 'Tax Specialist' }, NOW);
-  assert.deepEqual([line.from, line.to, line.took, line.when], ['Legal', 'Tax Specialist', '1m 1s', '11:45']);
+  assert.deepEqual([line.from, line.to, line.took, line.when], ['General Counsel', 'Tax Specialist', '1m 1s', '11:45']);
 });
 
 // ---------------------------------------------------------------- mock consistency
@@ -655,7 +655,7 @@ test('mock: team.list / team.get / team.position / team.crosstalk tell one consi
   for (const k of ['position', 'chats', 'duties', 'grants']) assert.ok(k in tp, `team.position has ${k}`);
   assert.ok(tp.position.effective, 'position.effective');
   const tools = powerRows(tp.position, names).find((r) => r.key === 'tools');
-  assert.ok(tools.items.some((i) => i.limitedBy === 'Legal'), 'tax shows a tool limited by Legal');
+  assert.ok(tools.items.some((i) => i.limitedBy === 'General Counsel'), 'tax shows a tool limited by General Counsel');
   for (const d of tp.duties) assert.ok(!/^Schedule /.test(triggerWords(d.trigger, tp.position.scope)), `duty ${d.id} trigger reads in words`);
   for (const id of Object.keys(names)) {
     const p = await rpc('team.position', { company: co.id, id });
@@ -691,7 +691,7 @@ test('mock: Tax Specialist\'s powers are cut the engine way; proposal cards carr
   assert.deepEqual(eff.limits, eff.limitedBy);
   assert.deepEqual(Object.keys(tp.position.limitedBy).sort(), ['bash', 'read:C:/Users/you/tax-archive', 'tools:NotebookEdit']);
   const marked = powerRows(tp.position, names, { companyFolders: got.company.folders }).flatMap((r) => (r.items ? r.items.filter((i) => i.limitNote).map((i) => `${r.key}:${i.value}:${i.limitNote}`) : r.limitNote ? [`${r.key}:${r.limitNote}`] : []));
-  assert.deepEqual(marked, ['read:C:/Users/you/tax-archive:outside the company folders', 'tools:NotebookEdit:limited by Legal', 'bash:limited by Legal']);
+  assert.deepEqual(marked, ['read:C:/Users/you/tax-archive:outside the company folders', 'tools:NotebookEdit:limited by General Counsel', 'bash:limited by General Counsel']);
   for (const id of Object.keys(names)) {
     if (id === 'tax') continue;
     const p = await rpc('team.position', { company: 'example-co', id });
@@ -701,7 +701,7 @@ test('mock: Tax Specialist\'s powers are cut the engine way; proposal cards carr
   const open = splitProposals(got.proposals).open;
   const create = open.find((p) => p.action === 'create'), edit = open.find((p) => p.action === 'edit');
   const cut = M.excessRows(M.excessOf(create), names, create.draft.scope);
-  assert.deepEqual(cut.map((x) => [x.power, x.by, x.why]), [['read', 'company', 'outside the company folders'], ['tools', 'legal', 'Legal does not have it'], ['bash', 'legal', 'Legal has no Bash']]);
+  assert.deepEqual(cut.map((x) => [x.power, x.by, x.why]), [['read', 'company', 'outside the company folders'], ['tools', 'legal', 'General Counsel does not have it'], ['bash', 'legal', 'General Counsel has no Bash']]);
   const ch = M.proposalChanges(edit, names, { duties: [] });
   assert.deepEqual(ch.fields.map((f) => f.key), ['name', 'remit', 'scope']);
   assert.ok(ch.brief.added >= 3 && ch.brief.removed === 1);
@@ -713,7 +713,7 @@ test('mock: Tax Specialist\'s powers are cut the engine way; proposal cards carr
   assert.deepEqual(tp.pending.proposals.map((p) => p.id), [create.id]);
   const legal = await rpc('team.position', { company: 'example-co', id: 'legal' });
   assert.deepEqual(Object.keys(legal.pending.requests[0]).sort(), ['access', 'at', 'kind', 'requestId', 'sessionId', 'target']);
-  assert.deepEqual(legal.pending.requests[0].access.position, { id: 'legal', name: 'Legal', path: ['Legal'] });
+  assert.deepEqual(legal.pending.requests[0].access.position, { id: 'legal', name: 'General Counsel', path: ['General Counsel'] });
 });
 
 test('mock ?team=imported: company card first, a position card before it is refused, approving it creates the company', async () => {
@@ -815,19 +815,19 @@ test('PROTOCOL shapes: status active|paused + busy, pending requests -> waiting,
   assert.equal(M.liveStatus({ status: 'active', busy: 'answering CEO', pending: { requests: 1 } }), 'waiting');
   assert.equal(M.liveStatus({ status: 'paused', busy: 'answering CEO' }), 'paused');
   const now = new Date(2026, 10, 18, 12, 0).getTime();
-  const a = M.rowActivity({ busy: 'answering CEO', lastActivity: { at: now - 5 * 60_000, text: 'answered Legal' } }, now);
+  const a = M.rowActivity({ busy: 'answering CEO', lastActivity: { at: now - 5 * 60_000, text: 'answered General Counsel' } }, now);
   assert.equal(a.text, 'answering CEO');
   assert.equal(a.ago, '5m');
-  assert.equal(M.rowActivity({ lastActivity: { at: now - 5 * 60_000, text: 'answered Legal' } }, now).text, 'answered Legal');
+  assert.equal(M.rowActivity({ lastActivity: { at: now - 5 * 60_000, text: 'answered General Counsel' } }, now).text, 'answered General Counsel');
   const pos = {
     powers: { read: ['$workspace'], write: ['$workspace'], tools: ['Read', 'WebFetch', 'NotebookEdit'], bash: 'readonly' },
     effective: { read: ['$workspace'], write: ['$workspace'], tools: ['Read'], bash: 'off' },
     limitedBy: { 'tools:WebFetch': 'legal', 'tools:NotebookEdit': 'tax', bash: 'legal' },   // wire.js limitedMap keys
   };
-  const rows = M.powerRows(pos, { legal: 'Legal', tax: 'Tax Specialist' });
+  const rows = M.powerRows(pos, { legal: 'General Counsel', tax: 'Tax Specialist' });
   const tools = rows.find((r) => r.key === 'tools').items;
-  assert.equal(tools.find((i) => i.value === 'WebFetch').limitedBy, 'Legal');
+  assert.equal(tools.find((i) => i.value === 'WebFetch').limitedBy, 'General Counsel');
   assert.equal(tools.find((i) => i.value === 'NotebookEdit').limitedBy, 'Tax Specialist');
   assert.equal(tools.find((i) => i.value === 'Read').limitedBy, null);
-  assert.equal(rows.find((r) => r.key === 'bash').limitedBy, 'Legal');
+  assert.equal(rows.find((r) => r.key === 'bash').limitedBy, 'General Counsel');
 });

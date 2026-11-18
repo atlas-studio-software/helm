@@ -1,4 +1,4 @@
-# App QA · notebook
+# QA Engineer · notebook
 ## Decisions
 ## Facts
 ## Open items

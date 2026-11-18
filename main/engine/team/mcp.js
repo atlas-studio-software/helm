@@ -36,10 +36,16 @@ const PROPOSE_ACTIONS = ['create', 'edit', 'retire', 'company'];
 
 // Text that names the owner is built per message from ownerWords (w = { owner, Owner }); the *_NOTE / RECURRING_*
 // constants are the unnamed ("the owner") versions.
+// How a position is named: the real job title, never a topic or department label (the owner's rule).
+const NAME_RULE = "Name a position by the job title that person would hold at a real company (General Counsel, Controller, "
+  + 'Marketing Manager, Business Development Representative, Tax Specialist), never by a topic or department label '
+  + '("Legal", "Finance", "Money & Paperwork", "Leads & Outreach"); the remit says what it covers.';
 const recurringCeo = (w) => 'When a non-code topic (legal, money, marketing, support…) comes up a second or third time and '
-  + `no position covers it, suggest a position to ${w.owner} in plain words first; call team_propose only once ${w.owner} wants it.`;
+  + `no position covers it, suggest a position to ${w.owner} in plain words first; call team_propose only once ${w.owner} wants it. `
+  + NAME_RULE;
 const recurringManager = (w) => 'When a topic in your remit comes up a second or third time and none of your reports covers '
-  + `it, suggest a new report to ${w.owner} in plain words first; call team_propose only once ${w.owner} wants it.`;
+  + `it, suggest a new report to ${w.owner} in plain words first; call team_propose only once ${w.owner} wants it. `
+  + NAME_RULE;
 const proposeNote = (w) => `${w.Owner} decides on the card. You will get the decision as a Helm message. Discuss changes `
   + 'meanwhile; call team_propose again to replace this proposal.';
 const noAnswerNote = (w) => `${w.Owner} has not answered in 10 minutes. Continue without it and record an Open item with `
@@ -166,7 +172,7 @@ function instructionsFor(ctx = {}, { store, ownerName } = {}) {
   out.push('- notebook_add: record a decision, fact, open item or log line in your notebook.');
   out.push(`- request_access: ask ${w.owner} for a path, tool or bash power you lack.`);
   out.push('- duty_report: end a duty run (summary, needs_owen, files).');
-  out.push('- team_propose: propose a new report under you, or a change to your subtree.');
+  out.push('- team_propose: propose a new report under you (named by its real job title, e.g. Tax Specialist, not "Tax"), or a change to your subtree.');
   out.push('- team_ticket: check or wait on a question you asked.');
   if (reports.length) {
     out.push('- team_ask / team_roster / team_cancel / team_log: ask and manage your direct reports; the question must carry all context.');
@@ -444,6 +450,7 @@ function handlersFor(ctx = {}, deps = {}) {
         return refused(reasons.join('; '), { reasons });
       }
       let note = proposeNote(ow());
+      if (r.nameWarning) note += ` Name check: ${r.nameWarning} Call team_propose again with the job title to replace this card.`;
       if (excess.length) {
         const mgr = parentForExcess == null ? 'the company' : posName(store, cid, parentForExcess);
         note += ` These powers exceed ${mgr}'s and would be cut unless ${ow().owner} widens them: ${excess.map((e) => `${e.power} ${typeof e.value === 'string' ? e.value : JSON.stringify(e.value)}`).join(', ')}.`;
@@ -490,12 +497,12 @@ function toolSpecs(ctx, z, { ownerName } = {}) {
   } else {
     const record = z.record(z.string(), z.unknown());
     S.team_propose = [ctx.kind === 'ceo'
-      ? `Propose creating, editing or retiring a position (or editing the company folders: action edit without id). Not blocking: ${w.Owner} decides on the card.`
-      : `Propose a new report under yourself, or an edit / retire of a position in your subtree. Not blocking: ${w.Owner} decides on the card.`,
+      ? `Propose creating, editing or retiring a position (or editing the company folders: action edit without id). Not blocking: ${w.Owner} decides on the card. ${NAME_RULE}`
+      : `Propose a new report under yourself, or an edit / retire of a position in your subtree. Not blocking: ${w.Owner} decides on the card. ${NAME_RULE}`,
     {
       action: z.enum(['create', 'edit', 'retire']),
       id: z.string().optional(), parent: z.string().nullable().optional(),
-      name: z.string().optional(), remit: z.string().optional(), scope: record.optional(), brief: z.string().optional(),
+      name: z.string().optional().describe('the real job title, e.g. General Counsel or Controller'), remit: z.string().optional().describe('what the position covers'), scope: record.optional(), brief: z.string().optional(),
       powers: record.optional(), duties: z.array(record).optional(), model: z.string().optional(), effort: z.string().optional(),
       seed: z.object({ notes: z.string().optional(), files: z.array(z.object({ path: z.string(), why: z.string() })).optional() }).optional(),
       reports_on_retire: z.enum(['move-up', 'retire-too']).optional(),
@@ -537,5 +544,5 @@ function createTeamServer(ctx = {}, deps = {}) {
 module.exports = {
   SERVER_NAME, SERVER_TIMEOUT_MS, ACCESS_WAIT_MS,
   toolNamesFor, instructionsFor, handlersFor, createTeamServer, isApproval, typedApproval,
-  RECURRING_CEO, RECURRING_MANAGER, PROPOSE_NOTE, NO_ANSWER_NOTE,
+  RECURRING_CEO, RECURRING_MANAGER, PROPOSE_NOTE, NO_ANSWER_NOTE, NAME_RULE,
 };

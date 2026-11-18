@@ -1,4 +1,4 @@
-# Marketing · notebook
+# Marketing Manager · notebook
 ## Decisions
 ## Facts
 ## Open items

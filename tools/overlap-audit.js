@@ -99,7 +99,7 @@ const SCENARIOS = [
   S('history', `async () => { (await import('/shell/state.js')).go('history'); }`, { pages: 3 }),
   S('deck', `async () => { (await import('/shell/state.js')).go('deck'); }`, { pages: 3 }),
   // Positions (lane T10): the Team view (org tree; wide desktop also shows the CEO's detail), one position's detail
-  // (Legal: the narrow layouts open it as its own screen), the CEO chat with its live Ask card, and Legal's own chat
+  // (General Counsel: the narrow layouts open it as its own screen), the CEO chat with its live Ask card, and General Counsel's own chat
   // (seed line, Asked-by bubble, its own Ask). Data: ui/lib/mock-positions.js + the mock sessions in mock-data.js.
   S('team', TEAM(''), { pages: 3, wait: 600 }),
   S('team-detail', TEAM(`t.select('legal');`), { pages: 3, wait: 700 }),

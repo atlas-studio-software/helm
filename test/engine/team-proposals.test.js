@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createTeamStore } = require('../../main/engine/team/store');
-const { createProposals, parseImport } = require('../../main/engine/team/proposals');
+const { createProposals, parseImport, nameWarning } = require('../../main/engine/team/proposals');
 
 const EXAMPLE = path.join(__dirname, '..', '..', 'docs', 'positions.example');
 const CID = 'northwind-goods';
@@ -89,6 +89,29 @@ test('propose refuses past the depth cap and past 10 direct reports', () => {
   assert.ok(r.refused && r.reasons.some((x) => /10 direct reports/.test(x)), JSON.stringify(r));
 });
 
+test('name check: a bare department label or an "&" topic pair is flagged on the card, never refused; a job title is not', () => {
+  for (const n of ['Legal', 'Finance', 'Marketing', 'Sales', 'Operations', 'Ops', ' legal ', 'Money & Paperwork', 'Leads & Outreach', 'Legal & Privacy']) {
+    assert.match(nameWarning(n) || '', /reads like a department or topic, not a job title/, n);
+  }
+  for (const n of ['General Counsel', 'Controller', 'Finance & Operations Manager', 'Marketing Manager', 'Business Development Representative',
+    'Head of Business Development', 'Tax Specialist', 'Privacy Officer', '', null, undefined]) assert.equal(nameWarning(n), null, String(n));
+
+  const { P, rec } = setup();
+  const a = P.propose({ company: CID, by: ceo(), action: 'create', draft: createDraft({ id: 'legal-2', name: 'Legal' }) });
+  assert.equal(a.status, 'shown', 'a warning, not a refusal');
+  assert.match(a.nameWarning, /^"Legal" reads like a department or topic/);
+  assert.equal(P.get(a.proposal).nameWarning, a.nameWarning, 'the card carries it');
+  assert.equal(rec.cards[0].item.proposal.nameWarning, a.nameWarning, 'and so does the chat card');
+  const b = P.propose({ company: CID, by: ceo('s_other'), action: 'create', draft: createDraft({ id: 'counsel-2', name: 'Associate General Counsel' }) });
+  assert.equal(b.nameWarning, undefined);
+  assert.equal(P.get(b.proposal).nameWarning, undefined);
+  // a rename to a label is flagged too; an edit that keeps the name is not
+  const c = P.propose({ company: CID, by: ceo('s_three'), action: 'edit', draft: { id: 'marketing', name: 'Leads & Outreach', why: 'Wider remit.' } });
+  assert.match(c.nameWarning, /^"Leads & Outreach"/);
+  const d = P.propose({ company: CID, by: ceo('s_four'), action: 'edit', draft: { id: 'tax', remit: 'Sales tax and VAT only.', why: 'Narrower.' } });
+  assert.equal(d.nameWarning, undefined);
+});
+
 test('a new proposal for the same target from the same session supersedes the older one; another session is refused', () => {
   const { P, rec, root } = setup();
   const base = logLines(root, CID, 'proposals').length; // the example's own lines
@@ -156,7 +179,7 @@ test('create approve with seed.notes only: the store seeds Facts; a CEO proposer
   const nb = read(root, 'positions', 'shipping', 'notebook.md');
   assert.match(nb, /## Facts\n\(seeded by ceo, 2026-02-01\)\n- Rates live in rates\.md/);
   assert.equal(rec.notes.find((n) => n.sid === 's_ceo').wake, false);
-  assert.ok(rec.notes.some((n) => n.sid === 's_legal' && /created under Legal/.test(n.text)));
+  assert.ok(rec.notes.some((n) => n.sid === 's_legal' && /created under General Counsel/.test(n.text)));
   assert.equal(rec.onboard.length, 0);
 });
 
@@ -184,7 +207,7 @@ const FIXTURE = () => ({
   kind: 'helm-team-proposals', status: 'pending', company: 'contoso-labs', draftedAt: '2026-02-01T10:00:00Z', draftedBy: 'a planning chat', note: 'example',
   proposals: [
     { ref: 'company', status: 'pending', team_propose: { action: 'company', id: 'contoso-labs', name: 'Contoso Labs', folders: ['C:/Users/you/contoso'], why: 'Group the lab repos.' } },
-    { ref: 'ops', status: 'pending', team_propose: { action: 'create', id: 'ops', parent: null, name: 'Operations', remit: 'Orders and suppliers.', scope: { kind: 'company' }, brief: BRIEF, powers: POWERS, duties: [], model: null, effort: 'high', seed: { notes: 'Suppliers: two.', files: [{ path: 'C:/Users/you/contoso/suppliers.md', why: 'who supplies what' }] }, why: 'Orders pile up.' },
+    { ref: 'ops', status: 'pending', team_propose: { action: 'create', id: 'ops', parent: null, name: 'Operations Manager', remit: 'Orders and suppliers.', scope: { kind: 'company' }, brief: BRIEF, powers: POWERS, duties: [], model: null, effort: 'high', seed: { notes: 'Suppliers: two.', files: [{ path: 'C:/Users/you/contoso/suppliers.md', why: 'who supplies what' }] }, why: 'Orders pile up.' },
       notebook_md: '# Operations · notebook\n## Decisions\n## Facts\n- Two suppliers (suppliers.md)\n## Open items\n- [ ] Map the reorder points\n## Log\n' },
     { ref: 'buyer', status: 'pending', team_propose: { action: 'create', id: 'buyer', parent: 'ops', name: 'Buyer', remit: 'Reorders stock.', brief: BRIEF, powers: { ...POWERS, bash: 'on' }, model: null, why: 'Reorders are manual.' } },
     { ref: 'later', status: 'drafting', team_propose: { action: 'create', id: 'later', name: 'Later', remit: 'x', brief: BRIEF, why: 'x' } },
@@ -227,7 +250,7 @@ test('import loads open cards only (never approved), dedupes a re-import, and ap
   assert.ok(P.decide({ proposal: id.company, decision: 'approve', how: 'click' }).ok);
   res = P.decide({ proposal: id.buyer, decision: 'approve', how: 'click' });
   assert.equal(res.ok, false);
-  assert.match(res.error, /approve Operations \(p_[0-9a-f]+\) first/);
+  assert.match(res.error, /approve Operations Manager \(p_[0-9a-f]+\) first/);
   assert.equal(P.get(id.buyer).status, 'open');
   res = P.decide({ proposal: id.ops, decision: 'approve', how: 'click' });
   assert.deepEqual(res, { ok: true, created: { company: 'contoso-labs', id: 'ops' } });
@@ -284,7 +307,7 @@ test('retire: refused with open tickets; re-checked on approve; move-up applies'
   let r = P.propose({ company: CID, by: ceo(), action: 'retire', draft: { id: 'payroll-tax', why: 'Folded into Tax.' } });
   assert.ok(r.refused && /open tickets/.test(r.reasons[0]), JSON.stringify(r));
   tickets.length = 0;
-  r = P.propose({ company: CID, by: ceo(), action: 'retire', draft: { id: 'tax', why: 'Legal covers it.' } });
+  r = P.propose({ company: CID, by: ceo(), action: 'retire', draft: { id: 'tax', why: 'General Counsel covers it.' } });
   assert.equal(r.status, 'shown');
   tickets.push({ id: 't_2', company: CID, state: 'delivered', to: 'legal', from: { kind: 'position', id: 'tax' } });
   let res = P.decide({ proposal: r.proposal, decision: 'approve', how: 'click' });
@@ -296,12 +319,12 @@ test('retire: refused with open tickets; re-checked on approve; move-up applies'
   assert.ok(res.ok, JSON.stringify(res));
   assert.equal(store.getPosition(CID, 'payroll-tax').parent, 'legal');
   assert.equal(store.tree(CID).has('tax'), false);
-  assert.match(P.get(r.proposal).result, /Tax Specialist retired \(1 report\(s\) moved up to Legal\)/);
+  assert.match(P.get(r.proposal).result, /Tax Specialist retired \(1 report\(s\) moved up to General Counsel\)/);
 });
 
 test('edit: diff on the card, approve updates position.json and the brief', () => {
   const { P, store, root } = setup();
-  const r = P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'marketing', remit: 'Posts and the newsletter.', brief: '# Marketing\n\nNew brief.\n', why: 'Narrower remit.' } });
+  const r = P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'marketing', remit: 'Posts and the newsletter.', brief: '# Marketing Manager\n\nNew brief.\n', why: 'Narrower remit.' } });
   assert.equal(r.status, 'shown');
   const c = P.get(r.proposal);
   assert.deepEqual(c.diff.remit.to, 'Posts and the newsletter.');
@@ -310,7 +333,7 @@ test('edit: diff on the card, approve updates position.json and the brief', () =
   assert.ok(P.decide({ proposal: r.proposal, decision: 'approve', how: 'click' }).ok);
   assert.equal(store.getPosition(CID, 'marketing').remit, 'Posts and the newsletter.');
   assert.equal(store.getPosition(CID, 'marketing').version, before + 1);
-  assert.equal(read(root, 'positions', 'marketing', 'brief.md'), '# Marketing\n\nNew brief.\n');
+  assert.equal(read(root, 'positions', 'marketing', 'brief.md'), '# Marketing Manager\n\nNew brief.\n');
   const same = P.propose({ company: CID, by: ceo(), action: 'edit', draft: { id: 'marketing', remit: 'Posts and the newsletter.', why: 'x' } });
   assert.ok(same.refused && /nothing to change/.test(same.reasons[0]));
 });

@@ -251,7 +251,7 @@ export function powerRows(pos, names = {}, ctx = {}) {
     return out;
   };
   const isCo = (c) => c.by == null || c.by === 'company';
-  // limitedBy: who cut it (names); limitNote: the words beside it, 'limited by Legal' | 'outside the company folders'
+  // limitedBy: who cut it (names); limitNote: the words beside it, 'limited by General Counsel' | 'outside the company folders'
   const lim = (list) => {
     if (!list.length) return { limitedBy: null, limitNote: null };
     const ppl = uniq(list.filter((c) => !isCo(c)).map((c) => nameOr(names, c.by)));

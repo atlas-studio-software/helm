@@ -1,6 +1,6 @@
 {
   "id": "payroll-tax",
-  "name": "Payroll Tax",
+  "name": "Payroll Tax Specialist",
   "parent": "tax",
   "remit": "Payroll tax filings for the two part-time staff.",
   "scope": {

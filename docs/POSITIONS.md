@@ -237,7 +237,7 @@ sessions keep their system prompt untouched, so your normal Claude Code behaviou
   `team_log`, or an ask.
 - Roster changes mid-chat: the system prompt is recorded once per conversation (SDK `snapshot`), so an approved
   change reaches a live CEO chat as a `<helm-note>` on its next message ("Team change: Tax Specialist now reports
-  to Legal"). This uses the steer.js `withNote` path, which already exists. `team_roster` always reads the live
+  to General Counsel"). This uses the steer.js `withNote` path, which already exists. `team_roster` always reads the live
   files.
 - Sessions in no company get the same server name with ONE tool, `team_propose` (action `company` only), deferred
   (`alwaysLoad: false`), with a one-line instruction. That is how the very first company is set up from a
@@ -396,7 +396,7 @@ renders `mcp__team__*` items with their own cards (section 10).
 
 **`team_ask({ to: string, question: string, handed?: string[], wait_s?: number })`**
 - `to` must be a DIRECT report of the caller (the CEO's direct reports are the top-level positions).
-  **Decided:** the chain of command is real. The CEO asks Legal and Legal delegates to Tax. Asking a deeper
+  **Decided:** the chain of command is real. The CEO asks General Counsel and General Counsel delegates to Tax Specialist. Asking a deeper
   position directly is refused with a message naming its manager. You can still open any position's tab and talk
   to it directly.
 - `question`: the full question plus any context the answerer needs. It shares nothing else of the asker's chat
@@ -407,7 +407,7 @@ renders `mcp__team__*` items with their own cards (section 10).
   max 600; clamped by the chain budget (5.7).
 - Returns one of:
   - `{ status: "answered", ticket, from: "legal", answer, took_s, chain: [...] }`
-  - `{ status: "pending", ticket, state: "queued: you are talking with Legal" | "working 6m" | "waiting on Tax Specialist", note }`.
+  - `{ status: "pending", ticket, state: "queued: you are talking with General Counsel" | "working 6m" | "waiting on Tax Specialist", note }`.
     The note says: "Tell the user it is pending. The answer will arrive in this chat as a Helm message. Carry on."
   - `{ status: "refused", reason }` (paused, retired, not your report, rate limit, cycle, chain too long).
     Too little time left in a chain returns `pending` at once instead (5.7).
@@ -460,7 +460,7 @@ Order:
 - Then asks from managers and the CEO, then colleague asks, then duty runs (FIFO within a class).
 - While an ask waits behind you, the position's tab shows a banner (not built yet: the engine has
   `team.ask.release`, but no banner calls it): "CEO's question is waiting:
-  'Does the new privacy page cover…' [Let Legal answer now] [Later]". *Let it answer now* delivers it as the next
+  'Does the new privacy page cover…' [Let General Counsel answer now] [Later]". *Let it answer now* delivers it as the next
   message right away. It never interrupts a running turn.
 
 The delivered message is sent with `es.send({ text, origin: 'helm' })`. Origin `helm` means prod-guard never counts
@@ -478,26 +478,26 @@ else of this chat or your notebook. If you need a report's input, use team_ask. 
 
 ### 5.4 What the asker's chat shows meanwhile
 
-- The `mcp__team__team_ask` tool item renders as an **Ask card**: "Asking Legal", a live state line, elapsed time,
-  [Open Legal] [Cancel question].
-- The card follows `team.ask.updated` events: `queued (you are talking with Legal)`, `Legal is working · 2m`,
-  `Legal asked Tax Specialist · 1m`, `answered in 3m 40s`. For a chain it shows the tree of sub-tickets, one
+- The `mcp__team__team_ask` tool item renders as an **Ask card**: "Asking General Counsel", a live state line, elapsed time,
+  [Open General Counsel] [Cancel question].
+- The card follows `team.ask.updated` events: `queued (you are talking with General Counsel)`, `General Counsel is working · 2m`,
+  `General Counsel asked Tax Specialist · 1m`, `answered in 3m 40s`. For a chain it shows the tree of sub-tickets, one
   indented line each.
 - On answer the card collapses to a one-line summary with the answer under a disclosure. The model already has the
   full text.
-- The CEO's turn is `working` with activity "Waiting for Legal".
+- The CEO's turn is `working` with activity "Waiting for General Counsel".
   - No stall false alarm. The CLI sends a `tool_progress` heartbeat about every 30 s while an SDK MCP call waits
     (measured), and any SDK message clears Helm's stall timer (stall.js). So stall.js needs no change.
   - The restart gate sees the turn as busy, as for any long tool, so an update restart waits for it.
 
 ### 5.5 Late answers, Stop, restarts
 
-- **Pending, then answered.** Helm delivers `<helm-answer ticket="t_4f1e" from="Legal">…</helm-answer>` into the
+- **Pending, then answered.** Helm delivers `<helm-answer ticket="t_4f1e" from="General Counsel">…</helm-answer>` into the
   asker's chat with `es.send({ origin: 'helm' })`. If the asker is idle this starts a turn, so the CEO relays it to
   you: an answer never sits unseen. If the asker is busy, it is queued behind its turn (never steered mid-turn: an
   answer is a new topic). The asker's Ask card updates to "answered (late)".
 - **You press Stop in the asker's chat while it waits.** The MCP call is cancelled. **Decided:** the ticket is
-  NOT cancelled. When it is answered, Helm adds an **answer card** to the chat (a Helm item, no turn): "Legal
+  NOT cancelled. When it is answered, Helm adds an **answer card** to the chat (a Helm item, no turn): "General Counsel
   answered after you stopped: [Show] [Send to CEO]". Stop means "don't spend more turns on my behalf", but the
   work already paid for is kept.
 - **Helm restarts mid-ask.** Tickets are persisted in `team-state.json`. If the answerer's turn survived in the
@@ -525,7 +525,7 @@ else of this chat or your notebook. If you need a report's input, use team_ask. 
 **Cycles and deadlocks.**
 - Helm keeps a wait-for graph: position P is waiting on ticket T, which targets Q.
 - An ask from P to Q is refused at once when Q is already in P's chain, or when Q reaches P in the graph
-  (A waits on B, B waits on C, C asks A). The refusal says: "Finance is waiting on you (through Tax). Answer
+  (A waits on B, B waits on C, C asks A). The refusal says: "Controller is waiting on you (through Tax Specialist). Answer
   with what you have."
 
 ### 5.7 Chains: delegating down the tree
@@ -543,14 +543,14 @@ notebook or chat.
   at once, with the note: "Too little time left in this chain to wait. Answer with what you have and say what is
   still pending. Helm will hand you the late answer; use ask_followup if it changes what you said."
 - So no call in a chain can outlive its caller's wait. The CEO always gets a result within its own `wait_s`
-  (≤ 600 s): the answer, or pending with the chain's state in words, e.g. "pending: Legal is waiting on Tax
+  (≤ 600 s): the answer, or pending with the chain's state in words, e.g. "pending: General Counsel is waiting on Tax
   Specialist (working 4m)".
 
 **Late answers in a chain.**
 - A sub-answer that arrives after its caller returned is delivered into the caller's chat as `<helm-answer>`, as in
   5.5.
 - If the caller has already answered upward, the delivered text says so and points at `ask_followup`. The addendum
-  then travels up the same way. The CEO chat gets "Legal adds (from Tax Specialist): …".
+  then travels up the same way. The CEO chat gets "General Counsel adds (from Tax Specialist): …".
 
 **Progress, never silent.**
 - Every state change of any ticket in a chain emits `team.ask.updated` with the whole chain snapshot (ticket, to,
@@ -592,6 +592,11 @@ team_propose({
   why: string                        // one or two lines shown on the card
 }) -> { proposal: "p_9c0d", status: "shown", where: ["this chat", "Team view"], note }
 ```
+- **The name is a real job title.** `name` is what that person would be called at a real company (General Counsel,
+  Controller, Marketing Manager, Business Development Representative, Tax Specialist), never a topic or department
+  label ("Legal", "Finance", "Money & Paperwork", "Leads & Outreach"); `remit` says what it covers. The tool
+  description and the recurring-topic line both say so. A create (or a rename) whose name is a bare department label
+  or contains " & " is not refused: the card gets a `nameWarning` line and the tool result repeats it in its note.
 - Helm validates first and refuses with reasons: schema, id unique, depth cap (6.4), powers ⊆ manager's (7.2),
   folders inside the company, retire of a position with open tickets (asks it to wait), more than 10 direct reports.
 - A valid proposal becomes a **proposal card** (section 10.4) and returns at once. It is NOT blocking.
@@ -605,7 +610,7 @@ team_propose({
 
 - **From a CEO session:** the card appears in that CEO chat and in Team view > Proposals.
 - **From a position:** the card appears in that position's chat, in Team view > Proposals (with a badge on the
-  Team rail button), and as a phone push ("Legal proposes a new report: Tax Specialist"). It is NOT injected into
+  Team rail button), and as a phone push ("General Counsel proposes a new report: Tax Specialist"). It is NOT injected into
   a CEO chat: that would start a CEO turn you did not ask for. Any CEO session sees open proposals in
   `team_roster` (`openProposals`), so the CEO can be asked to talk it through.
 - You can decide from any of these places. It is the same proposal id, and every copy resolves together.
@@ -623,18 +628,19 @@ team_propose({
   The card then reads "Approved by your reply 'yes, make it' at 14:02". Anything ambiguous leaves the card open.
   Helm-written messages never count.
 - After a decision Helm sends the proposing session `<helm-note>The user approved p_9c0d: Tax Specialist created under
-  Legal.</helm-note>` with its next message. If the session is idle and the proposal came from a position, it
+  General Counsel.</helm-note>` with its next message. If the session is idle and the proposal came from a position, it
   starts a short turn, so the manager can brief its new report. That brief is a normal `team_ask`, logged.
 - **The CEO noticing a recurring topic.** **Decided:** model-driven, no Helm-side detector. The CEO's server
   instructions say: "When a non-code topic (legal, money, marketing, support…) comes up a second or third time and
   no position covers it, suggest a position to the user in plain words first; call team_propose only after they
-  want it." Managers get the same line for reports. It costs nothing, and you keep the say.
+  want it. Name a position by the job title that person would hold at a real company …; the remit says what it
+  covers." Managers get the same line for reports. It costs nothing, and you keep the say.
 
 ### 6.4 Tree rules
 
 **Decided:**
 - **Depth cap 5** (CEO = 0, top-level = 1, deepest = 5). A deeper org on one laptop means asks bouncing through 5
-  Opus turns: slow and costly. Five covers e.g. Legal > Tax > Payroll tax > State payroll > one more.
+  Opus turns: slow and costly. Five covers e.g. General Counsel > Tax Specialist > Payroll Tax Specialist > State Payroll Analyst > one more.
 - **At most 10 direct reports per manager and 30 live positions per company.** The roster in a manager's
   instructions stays under ~600 tokens, and RAM stays sane (section 9.5).
 - **Re-parenting** is an `edit` with `parent`. It is refused if the new parent is in the moved node's own subtree
@@ -676,8 +682,8 @@ powers: {
 - **Outward actions are not a setting.** Sending email or messages, posting, paying or buying, pushing,
   deploying, publishing a release or package, and anything else that leaves the machine in your name
   ALWAYS asks, Approve once / Deny only. There is no "always" for outward: nothing leaves without your OK.
-- **Default for a non-coding position:** the schema example above. **Default for a coding position (e.g. App
-  QA):** `read: ["$workspace", "$scope"]`, `write: ["$workspace", "$scope"]`, plus Bash `on`, `worktree: true`.
+- **Default for a non-coding position:** the schema example above. **Default for a coding position (e.g. QA
+  Engineer):** `read: ["$workspace", "$scope"]`, `write: ["$workspace", "$scope"]`, plus Bash `on`, `worktree: true`.
   - `worktree: true` makes the position work in its own git worktree of the scope repo (Helm's existing worktrees
     feature, `main/worktrees.js`, branch `team/<company>/<id>`). Its edits never touch the live folder.
   - Merging is yours, through the existing worktree merge flow (prod-guard-guarded).
@@ -697,7 +703,7 @@ powers: {
 - A proposal whose powers exceed the manager's effective powers is refused with the exact excess. A report's
   powers can never exceed its manager's (a fixed rule).
 - Narrowing a manager narrows its whole subtree at once: Helm computes effective powers live, and the hook reads
-  them on every call. The Team view shows "limited by Legal" next to any power a report lists but cannot use.
+  them on every call. The Team view shows "limited by General Counsel" next to any power a report lists but cannot use.
 
 ### 7.3 Enforcement points
 
@@ -741,12 +747,12 @@ second prompt layer to confuse you.
    It opens a `request` item with `kind: "access"` in the position's chat. The session goes `waiting`, so the
    existing toast, Deck tile, phone push (`notify` kind `waiting`) and Home "needs you" all fire. The roster
    card shows a "1 request" chip with the same buttons. If the position was answering an ask, the asker's Ask
-   card says "waiting for your OK on Legal's access request".
+   card says "waiting for your OK on General Counsel's access request".
 3. The card shows: who (with its manager path), what, why, and the scope options:
    - **Approve once**: valid for the current chat until its turn ends. For a duty run, the whole run. For a
      ticket, until the ticket settles.
    - **Approve always**: saved into `position.json` powers (version +1). If the request is beyond the manager's
-     effective powers, the button reads "Approve always (also widens Legal)" and lists every ancestor it widens,
+     effective powers, the button reads "Approve always (also widens General Counsel)" and lists every ancestor it widens,
      so the tree rule holds. Not offered for `outward`.
    - **Deny**: with an optional note.
 4. The tool returns `{ decision: "once"|"always"|"denied", note? }`. The hook reads the new effective powers on
@@ -837,11 +843,11 @@ holds no "manager approves" path).
   cooldownMin?: 30 }                                                          // events: coalesce bursts (default 30)
 ```
 Examples, as they would be proposed (Northwind Goods):
-- Marketing `release` on `~/northwind-app` (one duty per repo). It drafts the post into `work/drafts/`; it never
+- Marketing Manager `release` on `~/northwind-app` (one duty per repo). It drafts the post into `work/drafts/`; it never
   posts.
-- Legal `commit` on `~/northwind-shop` with `paths: ["**/privacy*", "**/cookies*", "**/terms*"]`. It re-checks
+- General Counsel `commit` on `~/northwind-shop` with `paths: ["**/privacy*", "**/cookies*", "**/terms*"]`. It re-checks
   the legal text against the code (legal text must be true to what the code does).
-- Finance `schedule` `0 9 1 * *`, the monthly money check.
+- Controller `schedule` `0 9 1 * *`, the monthly money check.
 
 ### 9.2 Where duties run
 
@@ -925,7 +931,7 @@ Reuse map (from the UI survey; no new visual language): Deck's view scaffolding 
   - Position sessions are left out of the project groups. Otherwise each position folder would become a group
     named "legal".
   - A **Team** section, a sibling of Elsewhere and Past, lists only positions whose chat is working, waiting, or
-    used in the last hour. Each row is a normal `SessionRow` with title "Legal" and sub-line "Northwind Goods ·
+    used in the last hour. Each row is a normal `SessionRow` with title "General Counsel" and sub-line "Northwind Goods ·
     answering CEO". It collapses like Past.
   - Every position is in the Team view.
 - **Tabs.** A position chat is a normal tab (`openSession(id)`), titled with the position name and a small role
@@ -949,7 +955,7 @@ Reuse map (from the UI survey; no new visual language): Deck's view scaffolding 
     - last activity ("answered CEO 12m").
   - The CEO is the root row ("CEO · your chats in these folders", with the folder count).
   - Indent is 16 px per level on desktop and 12 px on phone. Beyond depth 3 on phone the indent stops growing and
-    the row shows a breadcrumb prefix ("… › Tax ›"), so 320 px never overflows.
+    the row shows a breadcrumb prefix ("… › Tax Specialist ›"), so 320 px never overflows.
   - Collapse state is remembered per company (`helm.team.open.<company>`).
 - **Desktop ≥ 1100 px:** two panes, tree left (min 320 px) and the selected position's detail right. Narrower
   desktop and phone: the tree is full width, and tapping a row opens the detail as its own screen with a back
@@ -961,7 +967,7 @@ Reuse map (from the UI survey; no new visual language): Deck's view scaffolding 
   - **Notebook**: same editor for `notebook.md`. Open items render as checkboxes in view mode; ticking one edits
     the file.
   - **Powers**: effective powers as plain rows (read: these folders; write: …; tools: chips; Bash: off), with
-    "limited by Legal" marks. Below are grants from `grants.jsonl` and [Discuss a change with the CEO], which
+    "limited by General Counsel" marks. Below are grants from `grants.jsonl` and [Discuss a change with the CEO], which
     opens a CEO chat with a prefilled draft "I want to change Tax Specialist's powers: ". Powers have no direct
     edit form, by rule 9. You can still edit `position.json` by hand. Helm re-validates the file, and on error
     it keeps the last good version and shows why.
@@ -970,13 +976,13 @@ Reuse map (from the UI survey; no new visual language): Deck's view scaffolding 
   - **Chats**: chat list (8.3).
   - **Cross-talk**: this position's slice of the log.
 - **Company sections** under the tree (collapsed headers): **Proposals** (open cards, then decided), **Inbox**
-  (duty reports, flags, created / retired notices; [Dismiss]), **Cross-talk** (rows "CEO → Legal · 14:02 · 'Does
+  (duty reports, flags, created / retired notices; [Dismiss]), **Cross-talk** (rows "CEO → General Counsel · 14:02 · 'Does
   the privacy page…' · answered 3m 40s"; expand for the full Q and A; a chain shows nested).
 
 ### 10.3 Position tab header
 
-The session header gets a slim line under the title: "Tax Specialist · reports to Legal · reports: Payroll tax,
-State filings". Each name is a link that opens that position's tab. There is also a "1 question waiting" chip when
+The session header gets a slim line under the title: "Tax Specialist · reports to General Counsel · reports: Payroll Tax Specialist,
+State Tax Analyst". Each name is a link that opens that position's tab. There is also a "1 question waiting" chip when
 an ask is queued behind you (with the 5.3 banner action, not built yet). Context bar as today.
 
 ### 10.4 Cards in chats
@@ -984,13 +990,13 @@ an ask is queued behind you (with the 5.3 banner action, not built yet). Context
 All new cards are built from `PermissionCard`'s structure and classes. Resolved ones collapse to `Record`, like
 today's requests.
 - **Ask card** (CEO and manager chats): `mcp__team__team_ask` and `colleague_ask` tool items. Live state, elapsed
-  time, a nested chain, [Open Legal] [Cancel question]; it collapses on answer (5.4).
+  time, a nested chain, [Open General Counsel] [Cancel question]; it collapses on answer (5.4).
 - **Asked-by bubble** (answerer's chat): a user item with `origin: 'ask'`. Left-aligned, labelled "Asked by CEO ·
-  Northwind Goods" or "Asked by Legal", with the handed files as chips. It is never styled as your right-hand
+  Northwind Goods" or "Asked by General Counsel", with the handed files as chips. It is never styled as your right-hand
   bubble. Duty runs show as "Duty · Monthly money check (scheduled)". The seed shows as a one-line helm-note
   ("Fresh chat · seeded from notebook + handoff of chat 3").
-- **Answer card** (late answers after Stop, 5.5): "Legal answered after you stopped" with [Show] [Send to CEO].
-- **Proposal card**: title ("New position: Tax Specialist under Legal" | "Change Legal" | "Retire Contracts" | "New
+- **Answer card** (late answers after Stop, 5.5): "General Counsel answered after you stopped" with [Show] [Send to CEO].
+- **Proposal card**: title ("New position: Tax Specialist under General Counsel" | "Change General Counsel" | "Retire Contracts Manager" | "New
   company: Northwind Goods").
   - Body: remit, scope, powers as chips (with any excess over the manager in `.chip.danger`), duties in words, the
     brief under a disclosure (Markdown), and seed files.
@@ -998,7 +1004,7 @@ today's requests.
   - Actions: [Approve] (`.btn-primary`), [Change…], [Decline]. Once decided it collapses to "Approved 14:02 (your
     click)" or "(your reply 'yes, make it')".
 - **Access card**: a `request` item, `kind: "access"`. Who (with manager path), what, why, and [Approve once]
-  [Approve always] (or "Approve always (also widens Legal)") [Deny] + note field. **Outward card**: same, with only
+  [Approve always] (or "Approve always (also widens General Counsel)") [Deny] + note field. **Outward card**: same, with only
   [Approve once] [Deny], and the exact command or tool input in mono.
 - **Phone.** Every card's actions wrap onto their own row at ≤ 393 px, with 44 px tap targets (`--tap`). The
   proposal brief stays collapsed by default. Checked at 393 × 852 and 320 × 700 by the overlap audit (12).
@@ -1147,7 +1153,7 @@ Tree decisions:
 - Re-parenting is an edit proposal. Retiring a manager moves its reports up by default.
 
 Open questions for the owner (each has a default that ships if nobody decides otherwise):
-1. **Connectors.** Should any position ever reach your claude.ai connectors (mail drafts for Marketing, a calendar,
+1. **Connectors.** Should any position ever reach your claude.ai connectors (mail drafts for the Marketing Manager, a calendar,
    etc.)?
    - Default: no. Positions draft into files, and the CEO or you send. They are switched off by config today
      (section 4).

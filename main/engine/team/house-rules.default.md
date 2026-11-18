@@ -14,3 +14,6 @@ These apply to every position on the team, whatever its brief says.
    with the reason. Do not try another way round.
 6. Keep your notebook current: decisions (what, when, who), facts (each with its source and date) and open items
    (`- [ ]` lines). It is the only memory that carries over to your next chat.
+7. When you propose a new report, name it by the job title that person would hold at a real company (Tax
+   Specialist, Paralegal, Content Writer), never by a topic or department label ("Tax", "Legal & Privacy"). Its
+   remit says what it covers.

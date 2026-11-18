@@ -45,6 +45,24 @@ const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)
 const codeErr = (code, message) => Object.assign(new Error(message), { code });
 
 // ---------- notebook ----------
+// The owner's rule: a position is named by the job title that person would hold at a real company (General Counsel,
+// Controller, Marketing Manager), never by a topic or department label. A name that looks like one is NOT refused:
+// the card carries `nameWarning` and the proposer's tool result repeats it. Flagged: a bare department word
+// ("Legal", "Finance", "Ops"), or a name joined by " & " with no role word in it ("Leads & Outreach"; "Finance &
+// Operations Manager" passes).
+const DEPARTMENT_LABELS = new Set(['legal', 'finance', 'marketing', 'sales', 'operations', 'ops', 'support', 'tax',
+  'accounting', 'bookkeeping', 'compliance', 'privacy', 'outreach', 'growth', 'admin', 'hr', 'people', 'it', 'qa',
+  'engineering', 'design', 'product', 'research', 'content', 'partnerships', 'communications', 'comms', 'security',
+  'customer success', 'customer care', 'business development', 'money', 'paperwork', 'leads']);
+const ROLE_WORD = /\b(manager|director|head|lead|officer|counsel|specialist|analyst|coordinator|representative|rep|engineer|accountant|controller|bookkeeper|assistant|associate|strategist|writer|copywriter|editor|designer|developer|administrator|agent|executive|consultant|advisor|adviser|clerk|chief|president|vp|scientist|architect|planner|producer|paralegal|recruiter|auditor|attorney|lawyer|marketer|buyer|technician|tester|partner|owner)\b/i;
+function nameWarning(name) {
+  const n = typeof name === 'string' ? name.trim().replace(/\s+/g, ' ') : '';
+  if (!n) return null;
+  if (!DEPARTMENT_LABELS.has(n.toLowerCase()) && !(/ & /.test(n) && !ROLE_WORD.test(n))) return null;
+  return `"${n}" reads like a department or topic, not a job title. Name the position by the title that person would `
+    + 'hold at a real company (e.g. General Counsel, Controller, Marketing Manager); the remit says what it covers.';
+}
+
 function hasAllHeadings(text) {
   return NOTEBOOK_HEADINGS.every((h) => new RegExp(`^##\\s+${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'mi').test(text));
 }
@@ -457,6 +475,8 @@ function createProposals(opts = {}) {
       ...(f._changes ? { _changes: f._changes } : {}),
     };
     if (c.diff && Array.isArray(excess) && excess.length) c.diff.excess = excess;
+    const warnName = action === 'create' ? nameWarning(f.draft.name) : action === 'edit' && f.target != null && f.diff && f.diff.name ? nameWarning(f.diff.name.to) : null;
+    if (warnName) c.nameWarning = warnName;
     // 6.2: a new proposal for the same target from the same session supersedes the older one
     if (by.sessionId) {
       for (const o of cards) {
@@ -488,7 +508,7 @@ function createProposals(opts = {}) {
     }
     safe(() => emit('team.proposal.updated', { company: c.company, proposal: pub(c) }), null);
     if (c.company) safe(() => emit('team.updated', { company: c.company }), null);
-    return { proposal: c.id, status: 'shown', where };
+    return { proposal: c.id, status: 'shown', where, ...(c.nameWarning ? { nameWarning: c.nameWarning } : {}) };
   }
 
   // ----- views -----
@@ -690,4 +710,4 @@ function createProposals(opts = {}) {
   return { propose: (a) => propose(a), open, list, get, decide, onUserMessage, import: importFile, pendingCount };
 }
 
-module.exports = { createProposals, parseImport, lineDiff };
+module.exports = { createProposals, parseImport, lineDiff, nameWarning };

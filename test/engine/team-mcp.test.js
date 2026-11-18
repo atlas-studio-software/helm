@@ -98,6 +98,8 @@ test('instructions: CEO lists direct reports with deeper counts, the recurring l
   assert.ok(!s.includes('Tax Specialist (tax)'), 'only direct reports are listed');
   assert.ok(s.includes(M.RECURRING_CEO));
   assert.ok(s.includes('When a non-code topic (legal, money, marketing, support…) comes up a second or third time and no position covers it, suggest a position to the owner in plain words first; call team_propose only once the owner wants it.'));
+  assert.ok(s.includes(M.NAME_RULE), 'the CEO is told to name positions by real job titles');
+  assert.match(M.NAME_RULE, /job title that person would hold at a real company \(General Counsel, Controller, .*never by a topic or department label \("Legal", "Finance", "Money & Paperwork", "Leads & Outreach"\); the remit says what it covers\.$/);
   assert.ok(s.includes('<helm-answer>'));
   assert.ok(!/SECRET-BRIEF|SECRET-NOTEBOOK/.test(s));
   assert.ok(s.length < 2400, `length ${s.length}`);
@@ -113,10 +115,12 @@ test('instructions: position, manager, none', () => {
   assert.ok(!/Colleagues.*Payroll \(payroll\)/.test(t), 'own reports are not colleagues');
   assert.ok(!/Colleagues.*Tax Specialist \(tax\)/.test(t), 'self is not a colleague');
   assert.ok(t.includes(M.RECURRING_MANAGER));
+  assert.ok(M.RECURRING_MANAGER.endsWith(M.NAME_RULE), 'managers get the naming rule with the recurring-topic line');
   assert.ok(!/SECRET-BRIEF|SECRET-NOTEBOOK/.test(t));
   const leaf = M.instructionsFor(PAYROLL, { store });
   assert.ok(leaf.includes('You report to Tax Specialist'));
   assert.ok(leaf.includes('Your reports: none.'));
+  assert.ok(leaf.includes('team_propose: propose a new report under you (named by its real job title'), 'a leaf proposing its first report is told too');
   assert.ok(!leaf.includes(M.RECURRING_MANAGER));
   const top = M.instructionsFor(LEGAL, { store });
   assert.ok(top.includes("You report to the CEO (the owner's main chats)."));
@@ -320,6 +324,12 @@ test('team_propose: authorization matrix', async () => {
   const cc = await ceo.team_propose({ action: 'create', name: 'Support', why });
   assert.equal(cc.status, 'shown');
   assert.equal(got[got.length - 1].draft.parent, null);
+  // a name warning from the port (proposals.js nameWarning) is repeated in the note, after the usual one
+  const warned = await M.handlersFor(CEO, { store, runtime, proposals: { propose: async () => ({ proposal: 'p_w', status: 'shown', nameWarning: '"Legal" reads like a department or topic, not a job title.' }) } })
+    .team_propose({ action: 'create', name: 'Legal', why });
+  assert.equal(warned.status, 'shown');
+  assert.equal(warned.note, `${M.PROPOSE_NOTE} Name check: "Legal" reads like a department or topic, not a job title. Call team_propose again with the job title to replace this card.`);
+  assert.equal(cc.note, M.PROPOSE_NOTE, 'no warning, no extra words');
   assert.match((await ceo.team_propose({ action: 'company', name: 'X', why })).reason, /exists/);
   // 'none': only company
   const none = M.handlersFor(NONE, { store, runtime, proposals });
@@ -391,6 +401,7 @@ test('createTeamServer: wraps results and errors (fake sdk)', async () => {
   assert.deepEqual(JSON.parse(err.content[0].text), { status: 'error', reason: 'text: empty' });
   assert.match(srv.tools.find((t) => t.name === 'colleague_ask').desc, /one specific question, no hand-over of your work/);
   assert.match(srv.tools.find((t) => t.name === 'team_ask').desc, /DIRECT reports/);
+  assert.ok(srv.tools.find((t) => t.name === 'team_propose').desc.endsWith(M.NAME_RULE), 'team_propose says how to name a position');
   M.createTeamServer(NONE, { sdk, z, store, runtime });
   assert.equal(made[1].alwaysLoad, false);
   assert.deepEqual(made[1].tools.map((t) => t.name), ['team_propose']);

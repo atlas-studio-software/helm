@@ -227,6 +227,22 @@ const prop = (over = {}) => ({ id: 'tm1', type: 'team', kind: 'proposal', propos
     duties: [{ id: 'm', title: 'Monthly money check', trigger: { kind: 'schedule', words: 'every month on the 1st' } }], brief: '# Brief', seed: { files: [{ path: 'C:/x/notes.md', why: 'past filings' }] } },
   status: 'open', ...over } });
 
+test('Proposal card: a name warning (proposals.js nameWarning) shows as a note above the body; none without it', async (t) => {
+  if (skip(t)) return;
+  fresh();
+  const warn = '"Legal" reads like a department or topic, not a job title.';
+  assert.equal(C.proposalModel({ ...prop().proposal, nameWarning: warn }).nameWarning, warn);
+  assert.equal(C.proposalModel(prop().proposal).nameWarning, '');
+  ui.mount(C.TeamItem, { item: prop({ draft: { ...prop().proposal.draft, name: 'Legal' }, nameWarning: warn }), sid: CEO.id });
+  await ui.settle();
+  const notes = ui.findAll((n) => n.p && n.p['data-name-warning'] !== undefined);
+  assert.equal(notes.length, 1);
+  assert.equal(ui.text(notes[0]), warn);
+  ui.mount(C.TeamItem, { item: prop(), sid: CEO.id });
+  await ui.settle();
+  assert.equal(ui.findAll((n) => n.p && n.p['data-name-warning'] !== undefined).length, 0);
+});
+
 test('Proposal card: title and body in words; Approve calls team.decide and collapses to "Approved … (your click)"', async (t) => {
   if (skip(t)) return;
   const d = deferred();
@@ -375,7 +391,7 @@ let FX = null;
 const fx = () => (FX ||= engineFixtures());
 const NW = { id: 's-nw-ceo', team: { company: 'northwind-goods', companyName: 'Northwind Goods' } };
 const NWP = (id, name, parent) => ({ id: `s-nw-${id}`, position: { company: 'northwind-goods', companyName: 'Northwind Goods', id, name, parent, chat: 1 } });
-const PT = NWP('payroll-tax', 'Payroll Tax', 'tax'), TS = NWP('tax', 'Tax Specialist', 'legal');
+const PT = NWP('payroll-tax', 'Payroll Tax Specialist', 'tax'), TS = NWP('tax', 'Tax Specialist', 'legal');
 function freshNw(list = [NW, PT, TS], opts) { fresh(opts); R.sessions = list; }
 const shows = (txt, list) => { for (const s of list) assert.ok(txt.includes(s), `shows "${s}"\n  in: ${txt}`); };
 const propItem = (p, over = {}) => ({ id: 'tp_' + p.id, type: 'team', kind: 'proposal', proposal: { ...p, ...over } });
@@ -389,16 +405,16 @@ test('engine create proposal: draft in words, power chips with the cut ones red,
   ui.mount(C.TeamItem, { item: propItem(p), sid: NW.id });
   await ui.settle();
   const txt = ui.text();
-  shows(txt, ['New position: State Payroll under Payroll Tax', 'State filings keep coming up in payroll questions.', 'State payroll filings and their deadlines.',
+  shows(txt, ['New position: State Payroll Analyst under Payroll Tax Specialist', 'State filings keep coming up in payroll questions.', 'State payroll filings and their deadlines.',
     'Reports to', 'The whole company', 'Read its workspace', 'Read company folders', 'Write its workspace', 'WebSearch',
     'Monthly deadlines · Monthly on the 1st at 09:00', 'Helm default · high effort', 'Read the brief · 3 lines', 'These powers would be cut',
-    "3 powers go beyond its manager's, so State Payroll will not have them even if you approve"]);
+    "3 powers go beyond its manager's, so State Payroll Analyst will not have them even if you approve"]);
   assert.doesNotMatch(txt, /\[object Object\]|undefined/);
   assert.deepEqual(chipsOf(/danger/).sort(), ['Bash on', 'Subagents', 'WebFetch'], 'exactly the excess powers are cut chips');
   assert.ok(chipsOf(/^chip$/).includes('Read its workspace'), 'the rest are plain chips');
   const rows = cutRows();
   assert.deepEqual(rows.map((r) => [r.power, r.by]), p.excess.map((x) => [x.power, x.by]), 'one row per engine excess entry, in order');
-  assert.match(rows[0].text, /^WebFetch.*Payroll Tax/);
+  assert.match(rows[0].text, /^WebFetch.*Payroll Tax Specialist/);
   assert.match(rows[1].text, /^Bash on.*Legal/);
   assert.match(rows[2].text, /^Subagents.*Legal/);
   assert.ok(txt.indexOf('These powers would be cut') < txt.indexOf('Approve'), 'the cut notice comes before Approve');
@@ -412,16 +428,16 @@ test('engine edit proposal: every field from -> to, powers + / −, duties, the 
   await ui.settle();
   const txt = ui.text();
   const field = (k) => ui.text(ui.findAll((n) => n.p['data-field'] === k)[0] || []);
-  assert.equal(field('name'), 'Payroll Tax→Payroll & Contractors');
+  assert.equal(field('name'), 'Payroll Tax Specialist→Contractor Payroll Specialist');
   assert.equal(field('remit'), `${p.diff.remit.from}→${p.diff.remit.to}`);
   assert.equal(field('scope'), 'The whole company→One product: northwind-app');
-  // both added powers are in the engine's excess (its scope folder and Bash, beyond Legal): cut chips, never green gains
+  // both added powers are in the engine's excess (its scope folder and Bash, beyond General Counsel): cut chips, never green gains
   assert.deepEqual(chipsOf(/\bok\b/), [], 'no added power shows as a gain when Approve cuts it');
   assert.deepEqual(chipsOf(/danger/), ['+ Write its scope (northwind-app)', '+ Bash read-only']);
   assert.deepEqual(chipsOf(/tc-removed/), ['− WebSearch', '− Bash off']);
-  shows(txt, ['Change Payroll Tax', '+ New: Quarterly withholding check · On the 1st of Jan, Apr, Jul and Oct at 09:00', '+3 −0 lines',
+  shows(txt, ['Change Payroll Tax Specialist', '+ New: Quarterly withholding check · On the 1st of Jan, Apr, Jul and Oct at 09:00', '+3 −0 lines',
     '## Contractors', '- Withholding rules for contractors abroad.', '… 4 unchanged lines', 'These powers would be cut',
-    "2 powers go beyond its manager's, so Payroll Tax will not have them even if you approve"]);
+    "2 powers go beyond its manager's, so Payroll Tax Specialist will not have them even if you approve"]);
   const bd = ui.findAll((n) => /\btc-bd\b/.test(n.p.class || ''));
   assert.deepEqual(bd.filter((n) => /\badd\b/.test(n.p.class)).map((n) => ui.text(n)), ['+## Contractors', '+- Withholding rules for contractors abroad.', '+ ']);
   assert.equal(node('brief-toggle'), undefined, 'a short brief diff shows open, nothing behind a disclosure');
@@ -449,7 +465,7 @@ test('engine reparent / retire / company proposals: reports-to in words, who ret
   assert.equal(cutRows().length, 0);
   ui.mount(C.TeamItem, { item: propItem(F.proposals.retire), sid: NW.id });
   await ui.settle();
-  shows(ui.text(), ['Retire Marketing', 'Marketing moves to an agency.', 'None: no one reports to it']);
+  shows(ui.text(), ['Retire Marketing Manager', 'Marketing Manager moves to an agency.', 'None: no one reports to it']);
   assert.doesNotMatch(ui.text(), /Also retires/);
   const moved = { ...F.proposals.retire, draft: { ...F.proposals.retire.draft, retires: ['legal'], moves: [{ id: 'tax', from: 'legal', to: null }] } };
   ui.mount(C.TeamItem, { item: propItem(moved), sid: NW.id });
@@ -458,7 +474,7 @@ test('engine reparent / retire / company proposals: reports-to in words, who ret
   const too = { ...F.proposals.retire, draft: { ...F.proposals.retire.draft, name: 'Tax Specialist', reports_on_retire: 'retire-too', retires: ['payroll-tax', 'tax'], moves: [] }, target: 'tax' };
   ui.mount(C.TeamItem, { item: propItem(too), sid: NW.id });
   await ui.settle();
-  shows(ui.text(), ['Also retires', 'Payroll Tax', 'They retire with it']);
+  shows(ui.text(), ['Also retires', 'Payroll Tax Specialist', 'They retire with it']);
   ui.mount(C.TeamItem, { item: propItem(F.proposals.company), sid: NW.id });
   await ui.settle();
   shows(ui.text(), ['New company: Harbor Studio', 'Harbor Studio', F.proposals.company.draft.folders[0]]);
@@ -470,7 +486,7 @@ test('engine access card, once-only + inside ~/.claude: the who line from the pa
   ui.mount(Q.RequestItem, { item: fx().access.onceOnly, sid: TS.id });
   await ui.settle();
   const txt = ui.text();
-  shows(txt, ['Tax Specialist asks to read', 'Northwind Goods › CEO › Legal › Tax Specialist', 'To see which model the CLI defaults to.',
+  shows(txt, ['Tax Specialist asks to read', 'Northwind Goods › CEO › General Counsel › Tax Specialist', 'To see which model the CLI defaults to.',
     'This is inside ~/.claude (Claude settings and history).', 'It is beyond the company folders, so it can only be approved once.', 'No answer in 30 min counts as Deny.']);
   assert.deepEqual(acts(), ['access-once', 'access-deny']);
   assert.doesNotMatch(txt, /Approve always|true/);
@@ -482,12 +498,12 @@ test('engine access card that widens managers: ancestor ids in names on the alwa
   freshNw();
   ui.mount(Q.RequestItem, { item, sid: PT.id });
   await ui.settle();
-  shows(ui.text(), ['Payroll Tax asks to run shell commands', 'Northwind Goods › CEO › Legal › Tax Specialist › Payroll Tax', 'Bash read-only: listing and reading commands']);
-  assert.equal(ui.text(node('access-always')), 'Approve always (also widens Tax Specialist and Legal)');
+  shows(ui.text(), ['Payroll Tax Specialist asks to run shell commands', 'Northwind Goods › CEO › General Counsel › Tax Specialist › Payroll Tax Specialist', 'Bash read-only: listing and reading commands']);
+  assert.equal(ui.text(node('access-always')), 'Approve always (also widens Tax Specialist and General Counsel)');
   freshNw([PT]);   // no chat open for tax or legal: the names come from access.position.path
   ui.mount(Q.RequestItem, { item, sid: PT.id });
   await ui.settle();
-  assert.equal(ui.text(node('access-always')), 'Approve always (also widens Tax Specialist and Legal)');
+  assert.equal(ui.text(node('access-always')), 'Approve always (also widens Tax Specialist and General Counsel)');
   assert.deepEqual(Q.accessModel({ ...item, access: { ...item.access, ancestors: ['legal'] } }, PT).ancestors, [{ id: 'legal', name: 'Legal' }], 'a subset: matched by slug');
 });
 
@@ -495,14 +511,14 @@ test('engine access records: timeout, an always on a once-only card was saved on
   if (skip(t)) return;
   const F = fx();
   const rec = async (item, sid) => { freshNw(); ui.mount(Q.RequestItem, { item, sid }); await ui.settle(); return ui.text(); };
-  assert.equal(await rec({ ...F.access.widens, status: 'cancelled', answer: { timedOut: true } }, PT.id), 'No answer in 30 min · Payroll Tax carries on without Bash read-only');
+  assert.equal(await rec({ ...F.access.widens, status: 'cancelled', answer: { timedOut: true } }, PT.id), 'No answer in 30 min · Payroll Tax Specialist carries on without Bash read-only');
   assert.equal(await rec({ ...F.access.onceOnly, status: 'answered', answer: { behavior: 'allow', scope: 'always' } }, TS.id),
     'Approved once (beyond the company folders, so once only) · Tax Specialist · settings.json');
   assert.equal(await rec({ ...F.access.widens, status: 'answered', answer: { behavior: 'allow', scope: 'always' } }, PT.id),
-    'Approved always · saved to Payroll Tax, Tax Specialist and Legal · Bash read-only');
+    'Approved always · saved to Payroll Tax Specialist, Tax Specialist and General Counsel · Bash read-only');
   assert.equal(await rec({ ...F.access.widens, status: 'cancelled' }, PT.id), 'Request withdrawn · Bash read-only');
   const out = { ...F.access.widens, access: { ...F.access.widens.access, kind: 'outward', outward: true, target: 'git push', command: 'git push' } };
-  assert.equal(await rec({ ...out, status: 'answered', answer: { behavior: 'allow', scope: 'always' } }, PT.id), 'Approved once (outward actions are never standing) · Payroll Tax · git push');
+  assert.equal(await rec({ ...out, status: 'answered', answer: { behavior: 'allow', scope: 'always' } }, PT.id), 'Approved once (outward actions are never standing) · Payroll Tax Specialist · git push');
   freshNw();
   ui.mount(Q.RequestItem, { item: out, sid: PT.id });
   await ui.settle();

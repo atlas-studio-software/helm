@@ -1,6 +1,6 @@
 // Positions: build a team `notify` event (desktop toast and phone push). Every team notice goes through
-// main/notify.js teamNotice, so the in-app toast and the push get the same proper title ("Legal needs your OK",
-// "Finance: Rent check is done"), never a bare position name.
+// main/notify.js teamNotice, so the in-app toast and the push get the same proper title ("General Counsel needs your OK",
+// "Controller: Rent check is done"), never a bare position name.
 //
 //   teamEvent({ what, company: { id, name }, position: { id, name }, subject?, action?, detail?, sessionId? })
 //   -> { kind: 'waiting', source: 'team', title, body, sessionId?, company, view?, team: { what, company, position,

@@ -837,7 +837,7 @@ html[data-theme="light"] .hljs-meta { color: #5f6673; }
 .tc-actions > .tc-note-line { flex: 1 1 100%; width: auto; }
 .tc-decide { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .tc-deny-row > .req-reason { flex: 1 1 140px; width: auto; }
-/* access: "Approve always (also widens Legal)" may wrap; the scope words say what each button does */
+/* access: "Approve always (also widens General Counsel)" may wrap; the scope words say what each button does */
 .access-always { height: auto; min-height: 30px; padding-top: 5px; padding-bottom: 5px; white-space: normal; line-height: 1.25; text-align: center; }
 .access-scope { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: -4px; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
 .access-scope strong { color: var(--text-2); font-weight: 500; }

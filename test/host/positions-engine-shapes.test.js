@@ -12,7 +12,7 @@ const { engineFixtures } = require('./fixtures/team-engine.js');
 const F = engineFixtures();
 const NOW = new Date(2026, 10, 17, 12, 0).getTime();
 // the example company's names (docs/positions.example/northwind-goods)
-const NAMES = { legal: 'Legal', tax: 'Tax Specialist', 'payroll-tax': 'Payroll Tax', marketing: 'Marketing' };
+const NAMES = { legal: 'General Counsel', tax: 'Tax Specialist', 'payroll-tax': 'Payroll Tax Specialist', marketing: 'Marketing Manager' };
 
 // keys + types: objects by their keys (sorted), arrays by their first element, null as 'null'
 function shapeOf(v) {
@@ -39,14 +39,14 @@ async function mock(mode = null) {
 }
 
 // ---------------------------------------------------------------- (a) the model on engine payloads
-test('engine: powerRows on team.position marks TodoWrite (Tax Specialist), Bash (Legal), the outside folder, and nothing else', () => {
+test('engine: powerRows on team.position marks TodoWrite (Tax Specialist), Bash (General Counsel), the outside folder, and nothing else', () => {
   const pos = F.positionPayload;
   const rows = M.powerRows(pos, NAMES, { companyFolders: F.companyFolders });
   const marked = rows.flatMap((r) => (r.items ? r.items.filter((i) => i.limitNote).map((i) => [r.key, i.value, i.limitedBy, i.limitNote]) : r.limitNote ? [[r.key, r.text, r.limitedBy, r.limitNote]] : []));
   assert.deepEqual(marked, [
     ['read', F.outside, 'the company folders', 'outside the company folders'],
     ['tools', 'TodoWrite', 'Tax Specialist', 'limited by Tax Specialist'],
-    ['bash', 'Off', 'Legal', 'limited by Legal'],
+    ['bash', 'Off', 'General Counsel', 'limited by General Counsel'],
   ]);
   const read = rows.find((r) => r.key === 'read').items;
   assert.deepEqual(read.slice(0, 2).map((i) => [i.label, i.partly]), [['Its workspace', false], ['Company folders', false]]);
@@ -60,7 +60,7 @@ test('engine: proposalChanges on an edit card lists the field changes, the brief
   const p = F.proposals.edit;
   const ch = M.proposalChanges(p, NAMES, { duties: [] });
   assert.deepEqual(ch.fields.map((f) => [f.key, f.from, f.to]), [
-    ['name', 'Payroll Tax', 'Payroll & Contractors'],
+    ['name', 'Payroll Tax Specialist', 'Contractor Payroll Specialist'],
     ['remit', p.diff.remit.from, 'Payroll tax and contractor withholding.'],
     ['scope', 'The whole company', `One product: ${M.baseName(F.app)}`],
   ]);
@@ -71,20 +71,20 @@ test('engine: proposalChanges on an edit card lists the field changes, the brief
   assert.deepEqual(ch.powers.removed.map((x) => [x.power, x.value, x.label]), [['tools', 'WebSearch', 'WebSearch'], ['bash', 'off', 'Bash off']]);
   assert.deepEqual([ch.duties.added.map((d) => d.title), ch.duties.changed, ch.duties.removed], [['Quarterly withholding check'], [], []]);
   assert.equal(ch.excess.length, 2);
-  assert.deepEqual(ch.excess.map((x) => [x.power, x.byName, x.why]), [['write', 'Legal', 'Legal does not have it'], ['bash', 'Legal', 'Legal has no Bash']]);
+  assert.deepEqual(ch.excess.map((x) => [x.power, x.byName, x.why]), [['write', 'General Counsel', 'General Counsel does not have it'], ['bash', 'General Counsel', 'General Counsel has no Bash']]);
   // a reparent card: only "Reports to"
-  assert.deepEqual(M.fieldChanges(F.proposals.reparent.diff, NAMES).map((f) => [f.label, f.from, f.to]), [['Reports to', 'Legal', 'the CEO']]);
+  assert.deepEqual(M.fieldChanges(F.proposals.reparent.diff, NAMES).map((f) => [f.label, f.from, f.to]), [['Reports to', 'General Counsel', 'the CEO']]);
 });
 
 test('engine: excessRows on a create card names who cuts each power; the headline counts them', () => {
   const p = F.proposals.create;
   const rows = M.excessRows(M.excessOf(p), NAMES, p.draft.scope);
   assert.deepEqual(rows.map((r) => [r.label, r.byName, r.why]), [
-    ['WebFetch', 'Payroll Tax', 'Payroll Tax does not have it'],
-    ['Bash on', 'Legal', 'Legal has no Bash'],
-    ['Subagents', 'Legal', 'Legal does not have it'],
+    ['WebFetch', 'Payroll Tax Specialist', 'Payroll Tax Specialist does not have it'],
+    ['Bash on', 'General Counsel', 'General Counsel has no Bash'],
+    ['Subagents', 'General Counsel', 'General Counsel does not have it'],
   ]);
-  assert.match(M.excessHeadline(rows, p.draft.name), /^3 powers go beyond its manager's, so State Payroll will not have them/);
+  assert.match(M.excessHeadline(rows, p.draft.name), /^3 powers go beyond its manager's, so State Payroll Analyst will not have them/);
   const chips = M.draftPowerChips(p.draft.powers, p.draft.scope, p.excess);
   assert.deepEqual(chips.filter((c) => c.cut).map((c) => c.label), ['WebFetch', 'Bash on', 'Subagents']);
   // after the imported company exists, a root card cut by the company folders
@@ -109,7 +109,7 @@ test('engine: foldCrosstalk on team.crosstalk (folded, ISO) nests the child, epo
   assert.deepEqual(chain.children.map((e) => e.ticket), ['t_fx2']);
   const child = chain.children[0];
   assert.deepEqual([typeof child.askedAt, child.doneAt - child.askedAt, child.tookMs], ['number', 61_000, 61_000]);
-  assert.equal(M.crosstalkLine(child, NAMES, NOW).from, 'Legal');
+  assert.equal(M.crosstalkLine(child, NAMES, NOW).from, 'General Counsel');
   assert.equal(M.countCrosstalk(f), F.crosstalk.entries.length);
 });
 

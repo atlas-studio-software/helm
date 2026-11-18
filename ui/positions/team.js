@@ -196,7 +196,7 @@ export function TeamView() {
     body = html`<div class="pos-pad"><div class="state-note pos-state"><span class="spinner"></span>Reading the team…</div></div>`;
   } else if (!list.enabled) {
     body = html`<${Empty} icon="agents" title="Team is off" action=${html`<button type="button" class="btn btn-primary" onClick=${() => go('settings')}><${Icon} name="settings" size=${15} />Open Settings</button>`}>
-      Positions are AI staff for a company: a Legal, a Marketing, a QA, each with its own brief, notebook and powers, under the CEO (your normal chats in the company's folders). Turn it on in Settings > Team.<//>`;
+      Positions are AI staff for a company: a General Counsel, a Marketing Manager, a QA Engineer, each with its own brief, notebook and powers, under the CEO (your normal chats in the company's folders). Turn it on in Settings > Team.<//>`;
   } else if (list.rootProblem) {
     body = html`<div class="pos-pad"><div class="cc-health danger pos-notice" role="alert"><${Icon} name="alert" size=${14} />
       <span>Helm can't use the team folder <span class="mono">${list.root}</span>: ${list.rootProblem}</span>

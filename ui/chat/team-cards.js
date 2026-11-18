@@ -1,6 +1,6 @@
 // Positions: the team cards in a chat (lane T7, docs/POSITIONS.md 10.4; shapes in section 11).
 //   Ask card       mcp__team__team_ask / colleague_ask tool items, in the asker's chat: who is asked, a live state line,
-//                  elapsed time, the chain of sub-asks (one indented line each), [Open Legal] [Cancel question]. On an
+//                  elapsed time, the chain of sub-asks (one indented line each), [Open General Counsel] [Cancel question]. On an
 //                  answer it collapses to one line with the answer under a disclosure (5.4).
 //   Asked-by       user items with origin ask | duty | answer | seed, in the answerer's chat: left-aligned and labelled
 //                  ("Asked by CEO · Atlas Studio"), never the owner's right-hand bubble. Handed files show as chips.
@@ -46,14 +46,14 @@ const sessionOf = (sid) => (sessions.value || []).find((s) => s.id === sid) || n
 // ---------- ask: state + chain ----------
 // Ticket states (crosstalk.jsonl): asked | delivered | answered | pending | late | refused | expired | cancelled. The
 // card also takes "queued", "working", "waiting" and "access" (waiting for the owner's OK on an access request), and a
-// state string with a reason ("queued: the owner is talking with Legal").
+// state string with a reason ("queued: the owner is talking with General Counsel").
 const STATE = { asked: 'queued', queued: 'queued', delivered: 'working', working: 'working', pending: 'working', late: 'working',
   waiting: 'working', access: 'access', answered: 'answered', refused: 'refused', expired: 'expired', cancelled: 'cancelled', canceled: 'cancelled' };
 export const normState = (s) => { const k = String(s || '').trim().toLowerCase().split(/[\s:(·]/)[0]; return k ? STATE[k] || 'working' : ''; };
 const OPEN = new Set(['queued', 'working', 'access']);
 const reasonOf = (raw) => { const m = /^\s*\w+\s*[:(·]\s*(.+?)\)?\s*$/.exec(String(raw || '')); return m ? m[1] : ''; };
 // The engine's words for a ticket (runtime.js stateWords, the chain row's `detail`): "queued: the owner is talking with
-// Legal", "working 3m", "waiting on Tax Specialist", "waiting for the owner's OK on Tax's access request", any of them
+// General Counsel", "working 3m", "waiting on Tax Specialist", "waiting for the owner's OK on Tax's access request", any of them
 // after "late: ". The detail says more than the display state: a 'pending' or 'late' ticket may still be queued.
 // the engine names the owner (ownerName) to positions; the owner reads this card, so it says 'you'
 const youWords = (note) => String(note || '').replace(/^.+? is talking with /i, 'you are talking with ');
@@ -95,7 +95,7 @@ export function liveSince(ticket, sinceMs, at, wall = Date.now()) {
 
 // chain: the engine's [{ ticket, parentTicket, to, name, state, detail, sinceMs }] (older shapes: parent, note,
 // tookMs, depth) -> rows with a depth from the root (0). Without parent links the chain is read as a straight line,
-// each asked by the one before (CEO -> Legal -> Tax).
+// each asked by the one before (CEO -> General Counsel -> Tax Specialist).
 export function normChain(chain, at = Date.now(), wall = Date.now()) {
   const rows = (Array.isArray(chain) ? chain : []).filter((c) => c && (c.ticket || c.to));
   const byT = new Map(rows.map((c) => [c.ticket, c]));
@@ -487,7 +487,7 @@ export function proposalModel(p, names = namesFor(p)) {
     id: p.id, action: p.action, title, name, parentName, d, why: str(p.why) || str(d.why), changes, diff: p.diff || null,
     who: p.action === 'create' ? name : str(p.diff?.name?.from) || name,
     status: p.status || dec.result || 'open', how: dec.how || p.decidedHow || '', quote: str(dec.quote) || str(p.quote), at: dec.at || p.decidedAt || null,
-    note: str(dec.note) || str(p.note), proposer: by.kind === 'ceo' ? 'the CEO' : nm(by) || '', by,
+    nameWarning: str(p.nameWarning), note: str(dec.note) || str(p.note), proposer: by.kind === 'ceo' ? 'the CEO' : nm(by) || '', by,
     retires: (arr(d.retires).length ? arr(d.retires).map(names) : arr(p.retires).map(nm)).filter((x) => x !== name), mode: str(d.reports_on_retire) || 'move-up', moves, movesUp,
   };
 }
@@ -644,6 +644,7 @@ function ProposalCard({ item, sid }) {
         <span class="req-title">${m.title}</span>
         ${m.why ? html`<span class="req-desc">${m.why}</span>` : null}
       </div><span class="req-kind">Proposal</span></div>
+    ${m.nameWarning ? html`<div class="req-why tc-name-warn" role="note" data-name-warning><${Icon} name="alert" size=${14} /><div class="req-why-body"><span>${m.nameWarning}</span></div></div>` : null}
     <${ExcessNotice} m=${m} />
     <${ProposalBody} m=${m} k=${k} />
     ${change != null ? html`<div class="tc-change-box">
